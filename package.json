@@ -1,0 +1,24 @@
+{
+  "name": "social",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "بوت النشر الذكي: Telegram → Claude → SocialAPI على Cloudflare Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "typecheck": "tsc --noEmit",
+    "build:check": "wrangler deploy --dry-run --outdir .build",
+    "test": "node --test 'test/unit/*.test.ts'",
+    "test:e2e": "npm run build:check && node --test --test-concurrency=1 'test/e2e/*.test.mjs'",
+    "check": "npm run typecheck && npm test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260922.1",
+    "miniflare": "5.20260921.0-alpha",
+    "typescript": "7.0.2",
+    "wrangler": "4.136.3"
+  }
+}

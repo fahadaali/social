@@ -1,0 +1,108 @@
+# بوت النشر الذكي (Telegram → Claude → SocialAPI)
+
+مساعد شخصي على تيليجرام يحفظ أفكارك، ويصوغها ثريداً لـ X ونصاً للينكدن وسكربتاً لسناب شات، ثم ينشرها أو يجدولها عبر SocialAPI **بعد تأكيدك فقط**.
+
+- المواصفات الكاملة: [`SPEC.md`](SPEC.md)
+- ملاحظات التنفيذ والانحرافات عن المواصفات: [`NOTES.md`](NOTES.md)
+
+## حالة المشروع
+
+| المرحلة | الحالة |
+|---|---|
+| 1. الأساس | منفّذة ومختبرة محلياً. تنتظر النشر والتجربة على الحسابات الحقيقية |
+| 2. الانتظام | لم تبدأ (الخطة الأسبوعية، `/queue`، `/usage`، `/pause`، `/resume`، الرسائل الصوتية) |
+| 3. التحليلات | لم تبدأ |
+
+`/ideas` و`/plan` متاحان مبكراً، لأن زري تذكير المهمة اليومية («أفكاري» و«اقترح موضوعاً») يحتاجانهما.
+
+## الإعداد (مرة واحدة)
+
+المتطلبات: Node.js 22.18 أو أحدث (تحتاجه الاختبارات لتشغيل TypeScript مباشرة)، وحساب Cloudflare مجاني.
+
+### 1. تيليجرام
+1. أنشئ البوت من `@BotFather` واحفظ التوكن.
+2. احصل على معرّفك الرقمي من `@userinfobot`.
+
+### 2. SocialAPI.ai
+1. أنشئ حساباً وعلامة (Brand) واحدة، واربط حساب لينكدن الشخصي.
+2. أعدّ X عبر BYOK، واتبع [دليل SocialAPI](https://docs.social-api.ai/connectors/twitter-byok) حرفياً (صلاحيات Read and write، وOAuth 2.0، وعنوان الرجوع `https://api.social-api.ai/oauth/callback/twitter`).
+3. أنشئ مفتاح API **محدود الصلاحيات** من Settings → API Keys بالصلاحيات: `posts:read`، `posts:write`، `media:write`، و`accounts:read` (لقراءة معرّفات الحسابات فقط). مسار `/v1/usage` متاح لأي مفتاح.
+4. اعرض معرّفات الحسابات:
+   ```sh
+   SOCIALAPI_KEY='sapi_key_...' node scripts/socialapi-check.mjs accounts
+   ```
+
+### 3. Anthropic
+أنشئ مفتاح API من Console، وضع حداً شهرياً للإنفاق.
+
+### 4. ملفاتك
+عبّئ `config/voice.md` بدليل أسلوبك و5 إلى 10 نماذج من كتاباتك، و`config/pillars.md` بمحاورك. اكتب كل محور عنواناً يبدأ بـ `##`.
+
+### 5. Cloudflare
+```sh
+npm install
+npx wrangler login
+npx wrangler d1 create social          # انسخ database_id الناتج إلى wrangler.toml
+```
+في `wrangler.toml` عبّئ:
+- `database_id`
+- `ALLOWED_TELEGRAM_USER_ID`
+- `SOCIALAPI_X_ACCOUNT_ID`
+- `SOCIALAPI_LINKEDIN_ACCOUNT_ID`
+
+ثم:
+```sh
+npm run deploy                          # يطبّق ترحيلات D1 ثم ينشر الـ Worker
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_WEBHOOK_SECRET   # مثلاً ناتج: openssl rand -hex 32
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put SOCIALAPI_KEY
+```
+
+**النشر التلقائي من GitHub (Workers Builds):** من لوحة Cloudflare: Workers & Pages ← Create ← Import a repository، واختر هذا المستودع، وسمِّ الـ Worker باسم `social` (يطابق `name` في `wrangler.toml`). اضبط أمر النشر (Deploy command) على `npm run deploy` حتى تُطبَّق الترحيلات الجديدة تلقائياً. بعدها يُنشر كل دفع (push) إلى الفرع الرئيسي.
+
+### 6. تفعيل الـ webhook
+```sh
+TELEGRAM_BOT_TOKEN='...' TELEGRAM_WEBHOOK_SECRET='...' sh scripts/set-webhook.sh https://social.<حسابك>.workers.dev
+```
+أرسل `/start` للبوت. إن ظهرت تحذيرات عن الإعداد فستجدها في رسالة الترحيب.
+
+### 7. التجربة
+- اختبار الثريد مع لينكدن (معيار القبول 4) مجاناً:
+  ```sh
+  SOCIALAPI_KEY='...' node scripts/socialapi-check.mjs thread-test <X_ACCOUNT_ID> <LINKEDIN_ACCOUNT_ID> --draft
+  ```
+  وسجّل النتيجة في `NOTES.md`.
+- جرّب أسبوعاً على `DRY_RUN = "true"`. في هذا الوضع يُحفظ كل «نشر» مسودةً في SocialAPI، ولا يُنشر ولا يُستهلك رصيد.
+- بعدها غيّر القيمة إلى `"false"` في `wrangler.toml` وادفع التغيير.
+
+## التطوير
+
+```sh
+npm run typecheck   # TypeScript
+npm test            # اختبارات الوحدات (Node test runner)
+npm run test:e2e    # اختبارات طرفية: الـ Worker المجمّع داخل workerd مع D1 محلية وخوادم وهمية
+npm run check       # الكل
+```
+لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار في ملف `.dev.vars`، وهو مستثنى من git.
+
+## البنية
+
+```
+src/index.ts            fetch() للـ webhook + scheduled() للـ Cron
+src/auth.ts             التحقق من السر والمالك
+src/telegram.ts         Bot API (إرسال، تعديل، أزرار، تنزيل ملفات)
+src/claude.ts           Messages API بمخرجات JSON مقيّدة بمخطط
+src/socialapi.ts        المنشورات، التحقق، الوسائط، الاستهلاك
+src/db.ts               D1
+src/time.ts             توقيت الرياض ↔ UTC
+src/text.ts             قيود الطول (عدّ أحرف X الموزون، كلمات لينكدن، إطارات سناب)
+src/preview.ts          رسالة المعاينة والأزرار
+src/ideas.ts · drafting.ts · publishing.ts · images.ts · planning.ts
+src/handlers/           messages · callbacks · cron
+src/prompts/            classify · draft · revise · plan · shared
+migrations/             0001_init.sql (من SPEC حرفياً) + 0002_draft_notes.sql
+config/                 voice.md · pillars.md (يعبّئهما المالك)
+scripts/                set-webhook.sh · socialapi-check.mjs
+test/                   unit/ · e2e/
+```

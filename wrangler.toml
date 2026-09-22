@@ -1,0 +1,38 @@
+# إعدادات Cloudflare Worker — المرجع: SPEC.md (§2 البنية، §3 المتغيرات، §9 المهام المجدولة)
+# طريقة الإعداد والنشر خطوة بخطوة في README.md
+name = "social"
+main = "src/index.ts"
+compatibility_date = "2026-09-15"
+
+# config/voice.md و config/pillars.md تُضمَّن كنصوص عند البناء (SPEC §6)
+[[rules]]
+type = "Text"
+globs = ["**/*.md"]
+fallthrough = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "social"
+# ← استبدل المعرّف بالقيمة التي يطبعها: npx wrangler d1 create social
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# توقيت Cron بـ UTC فقط؛ الرياض = UTC+3 بدون توقيت صيفي.
+# المرحلة 1: المهمة اليومية فقط (9:00 ص بتوقيت الرياض).
+# تُضاف "0 5 * * 0" (الخطة الأسبوعية) في المرحلة 2 و"0 14 * * 4" (التقرير) في المرحلة 3.
+[triggers]
+crons = ["0 6 * * *"]
+
+# سجلات Workers Logs (ضمن الخطة المجانية). لا تُسجَّل الأسرار ولا نصوص المنشورات.
+[observability]
+enabled = true
+
+[vars]
+ALLOWED_TELEGRAM_USER_ID = ""        # معرّف تيليجرام الرقمي للمالك (من @userinfobot)
+SOCIALAPI_X_ACCOUNT_ID = ""          # معرّف حساب X في SocialAPI (يبدأ بـ acc_)
+SOCIALAPI_LINKEDIN_ACCOUNT_ID = ""   # معرّف حساب لينكدن في SocialAPI (يبدأ بـ acc_)
+CLAUDE_MODEL = "claude-sonnet-5"
+CLAUDE_MODEL_FAST = "claude-haiku-4-5-20251001"
+REMINDER_AFTER_DAYS = "4"
+MONTHLY_POST_LIMIT = "10"
+DRY_RUN = "true"
