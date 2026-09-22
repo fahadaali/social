@@ -31,6 +31,7 @@ function schemaKind(body) {
   const props = body?.output_config?.format?.schema?.properties ?? {};
   if ('x_segments' in props) return 'draft';
   if ('suggestions' in props) return 'plan';
+  if ('headline' in props) return 'report';
   if ('summary' in props) return 'classify';
   return 'unknown';
 }
@@ -42,6 +43,14 @@ function defaultAnthropic(body, kind) {
   }
   if (kind === 'plan') {
     return { suggestions: [{ idea_id: null, pillar: 'الحوكمة', angle: 'زاوية جديدة عن اللجان', why_now: 'توازن المحاور' }] };
+  }
+  if (kind === 'report') {
+    return {
+      headline: 'أسبوع هادئ بتفاعل محدود',
+      top_post: 'المنشور #1 تصدّر بمجموع 18',
+      insight: 'التفاعل على X أعلى من لينكدن في هذه الفترة',
+      next_week_tip: 'انشر منشورين على الأقل لتتضح الصورة',
+    };
   }
   return draftOutput();
 }
@@ -69,6 +78,7 @@ export async function startBot({ vars = {} } = {}) {
     validate: { valid: true, errors: [], warnings: [] },
     createPost: null, // (body) => {status, json}
     getPost: null, // (id) => {status, json}
+    metrics: null, // (id) => {status, json}
     upload: { status: 201, json: { media_id: 'med_1' } },
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
     answerBarrier: 0,
@@ -131,7 +141,10 @@ export async function startBot({ vars = {} } = {}) {
 
     if (url.hostname === 'api.social-api.ai') {
       const p = url.pathname;
-      if (p === '/v1/usage' && request.method === 'GET') return json(200, mocks.usage);
+      if (p === '/v1/usage' && request.method === 'GET') {
+        if (mocks.usageError) return json(401, { error: { code: 'auth.invalid_key', message: 'bad key' } });
+        return json(200, mocks.usage);
+      }
       if (p === '/v1/posts/validate' && request.method === 'POST') return json(200, mocks.validate);
       if (p === '/v1/media/upload' && request.method === 'POST') return json(mocks.upload.status, mocks.upload.json);
       if (p === '/v1/posts' && request.method === 'POST') {
@@ -141,6 +154,22 @@ export async function startBot({ vars = {} } = {}) {
         }
         const status = call.body.publish_now ? 'publishing' : call.body.scheduled_at ? 'scheduled' : 'draft';
         return json(201, { id: `p_${++postSeq}`, status, scheduled_at: call.body.scheduled_at, targets: [] });
+      }
+      const mm = /^\/v1\/posts\/([^/]+)\/metrics$/.exec(p);
+      if (mm && request.method === 'GET') {
+        if (mocks.metrics) {
+          const r = mocks.metrics(mm[1]);
+          return json(r.status, r.json);
+        }
+        return json(200, {
+          data: {
+            post_id: mm[1],
+            targets: [
+              { platform: 'twitter', status: 'published', metrics: { likes: 12, comments: 3, shares: 2, saves: 1 } },
+              { platform: 'linkedin', status: 'published' },
+            ],
+          },
+        });
       }
       const m = /^\/v1\/posts\/([^/]+)$/.exec(p);
       if (m && request.method === 'GET') {

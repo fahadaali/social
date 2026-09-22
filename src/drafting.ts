@@ -118,6 +118,17 @@ async function failPlaceholder(ctx: Ctx, placeholderId: number, err: unknown, re
   );
 }
 
+/** «عرض» من /queue: يعيد إرسال معاينة المسودة بأزرارها الحالية. */
+export async function resendPreview(ctx: Ctx, draftId: number): Promise<void> {
+  const draft = await getDraft(ctx.env.DB, draftId);
+  if (!draft) {
+    await sendMessage(ctx.env, ctx.chatId, `لم أجد المسودة #${draftId}.`);
+    return;
+  }
+  const idea = draft.idea_id ? await getIdea(ctx.env.DB, draft.idea_id) : null;
+  await showPreview(ctx, draft, idea);
+}
+
 /** «صُغها الآن» / «صُغها»: مسودة جديدة من فكرة، مع زاوية اختيارية من الخطة. */
 export async function formulateIdea(ctx: Ctx, ideaId: number, angle?: string): Promise<void> {
   const idea = await getIdea(ctx.env.DB, ideaId);

@@ -26,7 +26,8 @@ export const CB = {
   plan: () => 'plan',
   ideas: () => 'ideas',
   planPick: (nonce: string, index: number) => `ps:${nonce}:${index}`,
-  retry: (kind: 'f' | 'g' | 'e' | 'p', id: number) => `rt:${kind}:${id}`,
+  show: (draftId: number) => `shw:${draftId}`,
+  retry: (kind: 'f' | 'g' | 'e' | 'p' | 's', id: number) => `rt:${kind}:${id}`,
 } as const;
 
 export const EDITABLE_STATUSES = ['pending', 'failed'] as const;

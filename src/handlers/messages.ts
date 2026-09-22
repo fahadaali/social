@@ -8,12 +8,20 @@ import { accountId, isDryRun, type Env } from '../env.ts';
 import { listIdeas, saveIdea } from '../ideas.ts';
 import { attachImage, pickImage } from '../images.ts';
 import { runPlan } from '../planning.ts';
+import { runStats } from '../reporting.ts';
+import { setRemindersPaused, showQueue, showUsage } from '../status.ts';
 import { sendMessage, type TgMessage } from '../telegram.ts';
 
 const COMMANDS_HELP = `الأوامر:
 /ideas — آخر 10 أفكار جديدة، لكل فكرة زر «صُغها»
 /plan — اقتراح 3 موضوعات للنشر
-/help — المساعدة`;
+/queue — المسودات المعلّقة والمجدولة
+/stats — تقرير الأداء الآن
+/usage — رصيد المنشورات المتبقي هذا الشهر في SocialAPI
+/pause و /resume — إيقاف تذكيرات الانقطاع واستئنافها
+/help — المساعدة
+
+تلقائياً: متابعة يومية 9 ص، وخطة أسبوعية الأحد 8 ص، وتقرير أداء الخميس 5 م (بتوقيت الرياض).`;
 
 function configWarnings(env: Env): string[] {
   const w: string[] = [];
@@ -73,11 +81,19 @@ async function handleCommand(ctx: Ctx, text: string): Promise<void> {
       await runPlan(ctx);
       return;
     case '/queue':
+      await showQueue(ctx);
+      return;
     case '/stats':
+      await runStats(ctx);
+      return;
     case '/usage':
+      await showUsage(ctx);
+      return;
     case '/pause':
+      await setRemindersPaused(ctx, true);
+      return;
     case '/resume':
-      await sendMessage(ctx.env, ctx.chatId, 'هذا الأمر ضمن المرحلة التالية من المشروع ولم يُفعَّل بعد.');
+      await setRemindersPaused(ctx, false);
       return;
     default:
       await sendMessage(ctx.env, ctx.chatId, 'أمر غير معروف. أرسل /help لعرض الأوامر.');

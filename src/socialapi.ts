@@ -49,6 +49,11 @@ export interface TargetMetrics {
   shares?: number;
   saves?: number;
   extra?: Record<string, unknown>;
+  // تسمية بديلة تظهر في أمثلة guides/concepts ووصف أدوات MCP الرسمية
+  like_count?: number;
+  comments_count?: number;
+  shares_count?: number;
+  saves_count?: number;
 }
 
 export interface PostTarget {
@@ -61,6 +66,7 @@ export interface PostTarget {
   scheduled_at?: string;
   error?: TargetError;
   metrics?: TargetMetrics;
+  metrics_synced_at?: string;
 }
 
 export interface Post {
@@ -199,6 +205,37 @@ export async function getPost(env: Env, postId: string): Promise<Post> {
   const data = await json<unknown>(env, 'GET', `/posts/${encodeURIComponent(postId)}`);
   if (!isPost(data)) throw new SocialApiError(200, 'invalid_response', 'unexpected post shape');
   return data;
+}
+
+/**
+ * GET /posts/{pid}/metrics — مقاييس التفاعل لكل منصة (SPEC §8 المقاييس).
+ * يحدّث الأرقام من المنصات لحظة الطلب؛ على X (BYOK) قد تُحتسب القراءة ضمن استهلاك تطبيقك.
+ */
+export async function getPostMetrics(env: Env, postId: string): Promise<PostTarget[]> {
+  const r = await json<{ data?: { targets?: PostTarget[] } } | null>(env, 'GET', `/posts/${encodeURIComponent(postId)}/metrics`);
+  return Array.isArray(r?.data?.targets) ? r.data.targets : [];
+}
+
+export interface Engagement {
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+}
+
+const num = (...vals: unknown[]): number | null => {
+  for (const v of vals) if (typeof v === 'number' && Number.isFinite(v)) return v;
+  return null;
+};
+
+/** يقرأ الأرقام بالتسميتين؛ الرقم الغائب يبقى null («غير متوفر») ولا يُعامل صفراً. */
+export function readEngagement(m: TargetMetrics | undefined): Engagement {
+  return {
+    likes: num(m?.likes, m?.like_count),
+    comments: num(m?.comments, m?.comments_count),
+    shares: num(m?.shares, m?.shares_count),
+    saves: num(m?.saves, m?.saves_count),
+  };
 }
 
 /** POST /media/upload — رفع من الخادم (multipart، الحقل file، حتى 50MB) ويعيد media_id جاهزاً. */

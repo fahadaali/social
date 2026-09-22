@@ -9,6 +9,7 @@ import {
   listDraftsByStatus,
   setIdeaStatus,
   setStateIfNewer,
+  STATE_KEYS,
   updateDraft,
   type Draft,
 } from './db.ts';
@@ -29,6 +30,7 @@ import {
   validatePost,
   type Post,
   type PublishMode,
+  type Usage,
   type ValidationIssue,
 } from './socialapi.ts';
 import { clearKeyboard, editMessageText, sendMessage, type InlineKeyboard } from './telegram.ts';
@@ -41,8 +43,6 @@ const POLL_ATTEMPTS = 3; // SPEC §8.5: حتى 3 مرات بفاصل 5 ثوان�
 const POLL_INTERVAL_MS = 5_000;
 const MIN_SCHEDULE_LEAD_MS = 5 * 60_000;
 const TERMINAL: ReadonlySet<string> = new Set(['published', 'partial', 'failed', 'cancelled']);
-
-export const LAST_PUBLISHED_KEY = 'last_published_at';
 
 // ---------- بصمة المحتوى القابل للنشر ----------
 
@@ -62,20 +62,26 @@ export function fingerprint(d: Pick<Draft, 'revision' | 'platforms' | 'media_id'
 
 // ---------- الرصيد ----------
 
-interface Credits {
+export interface Credits {
   unlimited: boolean;
   /** null = تعذّر الجلب */
   remaining: number | null;
+  used?: number;
+  limit?: number;
   periodEnd?: string | undefined;
+}
+
+/** حساب الرصيد من GET /usage؛ MONTHLY_POST_LIMIT احتياط إن غاب posts_limit. */
+export function computeCredits(u: Usage, fallbackLimit: number): Credits {
+  const limit = typeof u.posts_limit === 'number' ? u.posts_limit : fallbackLimit;
+  const used = typeof u.posts_used === 'number' ? u.posts_used : 0;
+  if (limit === -1) return { unlimited: true, remaining: null, used, periodEnd: u.period_end };
+  return { unlimited: false, remaining: Math.max(0, limit - used), used, limit, periodEnd: u.period_end };
 }
 
 async function fetchCredits(env: Env): Promise<Credits> {
   try {
-    const u = await getUsage(env);
-    const limit = typeof u.posts_limit === 'number' ? u.posts_limit : monthlyPostLimit(env);
-    if (limit === -1) return { unlimited: true, remaining: null, periodEnd: u.period_end };
-    const used = typeof u.posts_used === 'number' ? u.posts_used : 0;
-    return { unlimited: false, remaining: Math.max(0, limit - used), periodEnd: u.period_end };
+    return computeCredits(await getUsage(env), monthlyPostLimit(env));
   } catch (err) {
     console.warn(JSON.stringify({ evt: 'usage_failed', code: err instanceof SocialApiError ? err.code : 'unknown' }));
     return { unlimited: false, remaining: null };
@@ -326,7 +332,7 @@ export async function applyOutcome(ctx: Ctx, draftId: number, post: Post, messag
       await updateDraft(db, draftId, { status: post.status, published_at: publishedAt, socialapi_post_id: post.id });
       const d = await getDraft(db, draftId);
       if (d?.idea_id) await setIdeaStatus(db, d.idea_id, 'published');
-      await setStateIfNewer(db, LAST_PUBLISHED_KEY, publishedAt);
+      await setStateIfNewer(db, STATE_KEYS.lastPublishedAt, publishedAt);
       lines.push(post.status === 'published' ? `✅ نُشرت المسودة #${draftId}` : `⚠️ نُشرت المسودة #${draftId} جزئياً`);
       lines.push(...targetLines(post));
       break;

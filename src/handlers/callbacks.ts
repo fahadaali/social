@@ -11,10 +11,11 @@ import {
   updateDraft,
   type Draft,
 } from '../db.ts';
-import { formulateIdea, regenerateDraft, reviseDraft, reviseNotesKey } from '../drafting.ts';
+import { formulateIdea, regenerateDraft, resendPreview, reviseDraft, reviseNotesKey } from '../drafting.ts';
 import { PLATFORM_LABEL, type Platform } from '../env.ts';
 import { listIdeas, reclassifyIdea } from '../ideas.ts';
 import { pickSuggestion, runPlan } from '../planning.ts';
+import { runStats } from '../reporting.ts';
 import { CB, draftKeyboard, isEditable, scheduleKeyboard, statusLine } from '../preview.ts';
 import { confirmPublish, requestConfirmation } from '../publishing.ts';
 import {
@@ -203,6 +204,13 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         await listIdeas(ctx);
         break;
       }
+      case 'shw': {
+        const id = toInt(a);
+        if (id === null) break;
+        await answer();
+        await resendPreview(ctx, id);
+        break;
+      }
       case 'ps': {
         const index = toInt(b);
         if (!a || index === null) break;
@@ -220,6 +228,7 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         if (a === 'f') await formulateIdea(ctx, id);
         else if (a === 'g') await regenerateDraft(ctx, id);
         else if (a === 'p') await runPlan(ctx);
+        else if (a === 's') await runStats(ctx);
         else if (a === 'e') {
           const notes = await getState(db, reviseNotesKey(id));
           if (notes) await reviseDraft(ctx, id, notes);

@@ -103,6 +103,14 @@ export async function cleanupProcessedUpdates(db: D1Database): Promise<number> {
 
 // ---------- الحالة ----------
 
+// مفاتيح جدول state (SPEC §5) المستخدمة في أكثر من وحدة
+export const STATE_KEYS = {
+  lastPublishedAt: 'last_published_at',
+  remindersPaused: 'reminders_paused',
+  lastPlan: 'last_plan',
+  metricsSnapshot: 'metrics_snapshot',
+} as const;
+
 export async function getState(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM state WHERE key = ?').bind(key).first<{ value: string | null }>();
   return row?.value ?? null;
@@ -306,13 +314,37 @@ export async function claimDraft(
   return (r.meta.changes ?? 0) > 0;
 }
 
-export async function listDraftsByStatus(db: D1Database, statuses: DraftStatus[], limit = 50): Promise<Draft[]> {
+export async function listDraftsByStatus(
+  db: D1Database,
+  statuses: DraftStatus[],
+  limit = 50,
+  newestFirst = false,
+): Promise<Draft[]> {
   const placeholders = statuses.map(() => '?').join(', ');
   const r = await db
-    .prepare(`SELECT * FROM drafts WHERE status IN (${placeholders}) ORDER BY id ASC LIMIT ?`)
+    .prepare(`SELECT * FROM drafts WHERE status IN (${placeholders}) ORDER BY id ${newestFirst ? 'DESC' : 'ASC'} LIMIT ?`)
     .bind(...statuses, limit)
     .all<DraftRow>();
   return r.results.map(rowToDraft);
+}
+
+export interface PublishedDraft {
+  draft: Draft;
+  pillar: string | null;
+}
+
+/** المنشورات المنشورة (كلياً أو جزئياً) خلال آخر days يوماً، الأحدث أولاً، مع محور فكرتها. */
+export async function publishedSince(db: D1Database, days: number, limit = 50): Promise<PublishedDraft[]> {
+  const r = await db
+    .prepare(
+      `SELECT d.*, i.pillar AS idea_pillar FROM drafts d LEFT JOIN ideas i ON i.id = d.idea_id
+       WHERE d.status IN ('published', 'partial') AND d.socialapi_post_id IS NOT NULL
+         AND d.published_at >= datetime('now', ?)
+       ORDER BY d.published_at DESC LIMIT ?`,
+    )
+    .bind(`-${days} days`, limit)
+    .all<DraftRow & { idea_pillar: string | null }>();
+  return r.results.map((row) => ({ draft: rowToDraft(row), pillar: row.idea_pillar }));
 }
 
 /** آخر المنشورات المنشورة (لتجنب التكرار في الصياغة ولعناوين الخطة). */

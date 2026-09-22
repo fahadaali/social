@@ -1,18 +1,25 @@
 // المهام المجدولة (SPEC §9). Cron لا يعيد المحاولة عند الفشل، لذلك يُبلَّغ المالك بأي فشل.
 
 import { claudeErrorMessage, ClaudeError } from '../claude.ts';
+import { collectPerformance, loadSnapshot, saveSnapshot } from '../analytics.ts';
 import { CRON_BUDGET_MS, makeCtx, type Ctx } from '../context.ts';
-import { cleanupProcessedUpdates, countUpcomingScheduled, getState } from '../db.ts';
+import { cleanupProcessedUpdates, countUpcomingScheduled, getState, STATE_KEYS } from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
 import { CB } from '../preview.ts';
-import { followUpPosts, LAST_PUBLISHED_KEY } from '../publishing.ts';
+import { generatePlan } from '../planning.ts';
+import { followUpPosts } from '../publishing.ts';
+import { buildReport } from '../reporting.ts';
 import { SocialApiError, socialApiErrorMessage } from '../socialapi.ts';
 import { button, sendMessage, TelegramError } from '../telegram.ts';
+import { daysAr } from '../text.ts';
 import { daysBetween, parseUtc } from '../time.ts';
 
-export const CRON_DAILY = '0 6 * * *'; // 9:00 ص بتوقيت الرياض
+// توقيت Cron بـ UTC؛ الرياض = UTC+3 (SPEC §9)
+export const CRON_DAILY = '0 6 * * *'; // يومياً 9:00 ص
+export const CRON_WEEKLY_PLAN = '0 5 * * 0'; // الأحد 8:00 ص
+export const CRON_WEEKLY_REPORT = '0 14 * * 4'; // الخميس 5:00 م
 
-export const REMINDERS_PAUSED_KEY = 'reminders_paused';
+const SNAPSHOT_MAX_AGE_DAYS = 7;
 
 /** ملخص خطأ قصير بلا تفاصيل حساسة. */
 export function errorSummary(err: unknown): string {
@@ -23,21 +30,14 @@ export function errorSummary(err: unknown): string {
   return 'خطأ غير معروف';
 }
 
-export function daysAr(n: number): string {
-  if (n === 1) return 'يوم واحد';
-  if (n === 2) return 'يومان';
-  if (n >= 3 && n <= 10) return `${n} أيام`;
-  return `${n} يوماً`;
-}
-
 /** (ب) تذكير عند انقطاع النشر: لا تذكير إن كانت التذكيرات موقوفة أو يوجد منشور مجدول قادم. */
 export async function maybeRemind(ctx: Ctx): Promise<boolean> {
   const db = ctx.env.DB;
-  const paused = await getState(db, REMINDERS_PAUSED_KEY);
+  const paused = await getState(db, STATE_KEYS.remindersPaused);
   if (paused === '1' || paused === 'true') return false;
   if ((await countUpcomingScheduled(db)) > 0) return false;
 
-  const last = await getState(db, LAST_PUBLISHED_KEY);
+  const last = await getState(db, STATE_KEYS.lastPublishedAt);
   const days = last ? daysBetween(parseUtc(last), new Date()) : null;
   if (days !== null && days < reminderAfterDays(ctx.env)) return false;
 
@@ -73,6 +73,30 @@ async function daily(ctx: Ctx): Promise<string[]> {
   return failures;
 }
 
+/**
+ * الخطة الأسبوعية (SPEC §9): 3 موضوعات مقترحة لكل منها زر «صُغها».
+ * تُحدَّث لقطة المقاييس أولاً إن كانت أقدم من أسبوع، وفشلها لا يوقف الخطة.
+ */
+async function weeklyPlan(ctx: Ctx): Promise<string[]> {
+  try {
+    const snapshot = await loadSnapshot(ctx.env.DB);
+    if (!snapshot || daysBetween(parseUtc(snapshot.at), new Date()) >= SNAPSHOT_MAX_AGE_DAYS) {
+      await saveSnapshot(ctx.env.DB, await collectPerformance(ctx));
+    }
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'snapshot_refresh_failed', err: errorSummary(err) }));
+  }
+  const plan = await generatePlan(ctx, '📅 خطة الأسبوع — اقتراحات للنشر:');
+  await sendMessage(ctx.env, ctx.chatId, plan.text, plan.keyboard);
+  return [];
+}
+
+/** تقرير الأداء الأسبوعي (SPEC §9). */
+async function weeklyReport(ctx: Ctx): Promise<string[]> {
+  await sendMessage(ctx.env, ctx.chatId, await buildReport(ctx));
+  return [];
+}
+
 interface CronTask {
   name: string;
   run: (ctx: Ctx) => Promise<string[]>;
@@ -80,6 +104,8 @@ interface CronTask {
 
 const TASKS: Record<string, CronTask> = {
   [CRON_DAILY]: { name: 'المتابعة اليومية', run: daily },
+  [CRON_WEEKLY_PLAN]: { name: 'الخطة الأسبوعية', run: weeklyPlan },
+  [CRON_WEEKLY_REPORT]: { name: 'تقرير الأداء الأسبوعي', run: weeklyReport },
 };
 
 export async function runScheduled(env: Env, cron: string): Promise<void> {

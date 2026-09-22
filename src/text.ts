@@ -134,3 +134,19 @@ export function truncate(text: string, max: number): string {
   const t = text.replace(/\s+/gu, ' ').trim();
   return t.length <= max ? t : t.slice(0, max - 1).trimEnd() + '…';
 }
+
+/** «يوم واحد»، «يومان»، «4 أيام»، «11 يوماً». */
+export function daysAr(n: number): string {
+  if (n === 1) return 'يوم واحد';
+  if (n === 2) return 'يومان';
+  if (n >= 3 && n <= 10) return `${n} أيام`;
+  return `${n} يوماً`;
+}
+
+/** «منشور واحد»، «منشوران»، «4 منشورات»، «11 منشوراً». */
+export function postsAr(n: number): string {
+  if (n === 1) return 'منشور واحد';
+  if (n === 2) return 'منشوران';
+  if (n >= 3 && n <= 10) return `${n} منشورات`;
+  return `${n} منشوراً`;
+}

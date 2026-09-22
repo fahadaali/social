@@ -53,7 +53,7 @@ export function planSystem(pillarsMd: string): string {
   return assistantSystemPrompt(pillarsMd, 'مهمتك تخطيط النشر الأسبوعي للمالك من بنك أفكاره ومحاور محتواه.');
 }
 
-export function planUser(today: string, ideas: PlanIdea[], recentTitles: string[]): string {
+export function planUser(today: string, ideas: PlanIdea[], recentTitles: string[], performance?: string | null): string {
   const ideaLines = ideas.length
     ? ideas
         .map((i) => `- #${i.id} [${i.pillar ?? 'غير مصنّف'}] (منذ ${i.age_days} يوماً): ${truncate(i.text, 280)}`)
@@ -65,6 +65,7 @@ export function planUser(today: string, ideas: PlanIdea[], recentTitles: string[
     `المهمة: اقترح ${PLAN_SIZE} موضوعات للنشر.`,
     `بنك الأفكار (الحالة new، الأقدم أولاً):\n${quote('ideas', ideaLines)}`,
     `عناوين آخر المنشورات (تجنّب تكرارها):\n${quote('recent', recent)}`,
+    performance ? quote('performance', performance) : '',
     [
       'الضوابط:',
       `- ${PLAN_SIZE} اقتراحات موزعة على محاور مختلفة قدر الإمكان، مع تفضيل الأفكار الأقدم.`,
@@ -72,9 +73,11 @@ export function planUser(today: string, ideas: PlanIdea[], recentTitles: string[
       '- pillar: محور الاقتراح من قائمة المحاور.',
       `- إذا قلّت الأفكار عن ${PLAN_SIZE}، يُسمح باقتراح موضوع جديد من المحاور مع idea_id: null.`,
       '- angle: الزاوية المقترحة للمنشور في جملة أو جملتين.',
-      '- why_now: سبب مختصر لملاءمة الموضوع الآن، استناداً إلى التوازن بين المحاور وعمر الفكرة وما نُشر مؤخراً، دون اختلاق أحداث أو مناسبات أو أرقام.',
+      '- why_now: سبب مختصر لملاءمة الموضوع الآن، استناداً إلى التوازن بين المحاور وعمر الفكرة وما نُشر مؤخراً وأداء المحاور إن وُجد، دون اختلاق أحداث أو مناسبات أو أرقام.',
     ].join('\n'),
-  ].join('\n\n');
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export function parsePlan(validIds: Set<number>) {

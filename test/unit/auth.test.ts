@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ownerChat } from '../../src/auth.ts';
-import { daysAr } from '../../src/handlers/cron.ts';
+import { daysAr } from '../../src/text.ts';
 import type { TgUpdate } from '../../src/telegram.ts';
 
 const OWNER = '111';
