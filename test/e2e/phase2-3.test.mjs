@@ -264,3 +264,73 @@ test('the Sunday plan refreshes a missing/old snapshot first, and still plans if
     assert.equal(r.outcome, 'ok');
     assert.equal(bot.tg('sendMessage').filter((c) => c.body.text.startsWith('📅 خطة الأسبوع')).length, 3);
   }));
+
+// ---------- الرسائل الصوتية (المرحلة 2، بعد موافقة المالك) ----------
+
+test('voice note → Whisper (Arabic) → idea with source voice, classified, transcript shown for checking', () =>
+  withBot({}, async (bot) => {
+    await bot.sendVoice({ duration: 40 });
+    const saved = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('حُفظت الفكرة #1')), 10_000, 'voice idea');
+    assert.ok(bot.tg('sendMessage').some((c) => c.body.text.startsWith('🎙 أفرّغ الرسالة الصوتية')), 'progress message first');
+    assert.match(saved.body.text, /🎙 النص المفرّغ:\n«فكرة صوتية: مجالس الإدارة تحتاج مصفوفة صلاحيات واضحة»/);
+    assert.deepEqual(saved.body.reply_markup.inline_keyboard.flat().map((b) => b.text), ['صُغها الآن']);
+    const [call] = bot.ai();
+    assert.equal(call.body.model, '@cf/openai/whisper-large-v3-turbo');
+    assert.equal(call.body.inputs.language, 'ar');
+    assert.equal(call.body.inputs.task, 'transcribe');
+    assert.equal(call.body.inputs.vad_filter, true);
+    assert.equal(call.body.inputs.audio.base64, Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]).toString('base64'));
+    assert.equal(bot.lastTg('getFile').body.file_id, 'voice_1');
+    const idea = await bot.row('SELECT text, source, pillar FROM ideas WHERE id = 1');
+    assert.deepEqual({ ...idea }, { text: 'فكرة صوتية: مجالس الإدارة تحتاج مصفوفة صلاحيات واضحة', source: 'voice', pillar: 'الحوكمة' });
+  }));
+
+test('audio files are transcribed too; over-long notes are refused before any download', () =>
+  withBot({}, async (bot) => {
+    await bot.sendVoice({ asAudio: true });
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('حُفظت الفكرة #1')), 10_000);
+    await bot.sendVoice({ duration: 301 });
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('الرسالة الصوتية أطول من 5 دقائق')), 5000);
+    assert.equal(bot.ai().length, 1);
+    assert.equal(bot.tg('getFile').length, 1);
+  }));
+
+test('silence / no speech → clear message and nothing saved', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.ai = () => ({ text: '   ' });
+    await bot.sendVoice();
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('لم أتعرّف على كلام')), 10_000);
+    assert.equal((await bot.row('SELECT COUNT(*) AS n FROM ideas')).n, 0);
+    assert.equal(bot.anthropic().length, 0);
+  }));
+
+test('transcription failure → «أعد المحاولة» retries the same voice note', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.ai = () => ({ __error: 'AiError: inference failed' });
+    await bot.sendVoice();
+    const failed = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('❌ تعذّر تفريغ الرسالة الصوتية')), 10_000);
+    assert.equal(failed.body.reply_markup.inline_keyboard[0][0].callback_data, 'rt:v:0');
+    assert.equal((await bot.row('SELECT COUNT(*) AS n FROM ideas')).n, 0);
+    bot.mocks.ai = null;
+    await bot.press('rt:v:0');
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('حُفظت الفكرة #1')), 10_000, 'saved after retry');
+    assert.equal(bot.tg('getFile').filter((c) => c.body.file_id === 'voice_1').length, 2);
+  }));
+
+test('daily Workers AI allocation exhausted → specific message', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.ai = () => ({ __error: 'AiError: you have used up your daily free allocation of 10,000 neurons' });
+    await bot.sendVoice();
+    await bot.waitFor(() => bot.texts().some((t) => t.includes('استُنفدت حصة Workers AI اليومية')), 10_000);
+  }));
+
+test('a voice note while waiting for edit notes becomes an idea and cancels the wait', () =>
+  withBot({}, async (bot) => {
+    await bot.db.prepare(`INSERT INTO drafts (x_segments, linkedin_text) VALUES ('["t"]', 'l')`).run();
+    await bot.press('edt:1');
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✏️ اكتب ملاحظاتك')), 5000);
+    await bot.sendVoice();
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('حُفظت الفكرة #1')), 10_000);
+    assert.equal(await bot.row("SELECT value FROM state WHERE key = 'awaiting_edit'"), null);
+    assert.equal(bot.anthropic('draft').length, 0, 'not treated as revision notes');
+  }));

@@ -10,6 +10,25 @@ export const STRANGER = 222222;
 export const SECRET = 'e2e_secret-TOKEN_0123456789';
 export const BOT_TOKEN = '123456:TEST-bot-token';
 
+// ربط Workers AI (env.AI) لا يعمل محلياً دون حساب؛ نحاكيه بعامل ثانٍ يعرض run() عبر RPC
+// ويمرر الطلب إلى الخادم الوهمي في Node ليُسجَّل ويُرد عليه.
+const AI_MOCK_SCRIPT = `
+import { WorkerEntrypoint } from 'cloudflare:workers';
+export default class AiMock extends WorkerEntrypoint {
+  async run(model, inputs) {
+    const audio = inputs && typeof inputs.audio === 'string' ? { base64: inputs.audio } : inputs.audio;
+    const res = await fetch('https://ai.mock/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, inputs: { ...inputs, audio } }),
+    });
+    const data = await res.json();
+    if (data && data.__error) throw new Error(data.__error);
+    return data;
+  }
+  async fetch() { return new Response('ai mock'); }
+}`;
+
 const ROOT = new URL('../../', import.meta.url);
 const BUILD_DIR = new URL('.build', ROOT).pathname; // ناتج: npm run build:check
 
@@ -80,6 +99,8 @@ export async function startBot({ vars = {} } = {}) {
     getPost: null, // (id) => {status, json}
     metrics: null, // (id) => {status, json}
     upload: { status: 201, json: { media_id: 'med_1' } },
+    // (inputs) => رد النموذج، أو { __error: 'رسالة' } لرمي خطأ
+    ai: null,
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
     answerBarrier: 0,
     // (method, body) => true لإفشال طلب تيليجرام بعينه
@@ -127,6 +148,12 @@ export async function startBot({ vars = {} } = {}) {
       }
       if (method === 'getFile') return json(200, { ok: true, result: { file_id: call.body.file_id, file_path: 'photos/file_7.jpg', file_size: 6 } });
       return json(200, { ok: true, result: true });
+    }
+
+    if (url.hostname === 'ai.mock') {
+      call.ai = call.body;
+      const out = mocks.ai ? mocks.ai(call.body.inputs, call.body.model) : { text: 'فكرة صوتية: مجالس الإدارة تحتاج مصفوفة صلاحيات واضحة' };
+      return json(200, out);
     }
 
     if (url.hostname === 'api.anthropic.com') {
@@ -210,19 +237,32 @@ export async function startBot({ vars = {} } = {}) {
   const workerLogs = [];
   const mf = new Miniflare(
     convertV4MiniflareOptions({
-      modulesRoot: BUILD_DIR,
-      modules: [
-        { type: 'ESModule', path: `${BUILD_DIR}/index.js` },
-        ...readdirSync(BUILD_DIR)
-          .filter((f) => f.endsWith('.md') && f !== 'README.md')
-          .map((f) => ({ type: 'Text', path: `${BUILD_DIR}/${f}` })),
-      ],
-      compatibilityDate: '2026-09-15',
-      bindings,
-      d1Databases: { DB: 'e2e-db' },
-      outboundService: outbound,
       log: new Log(LogLevel.NONE),
       handleStructuredLogs: (log) => workerLogs.push(log),
+      workers: [
+        {
+          name: 'bot',
+          modulesRoot: BUILD_DIR,
+          modules: [
+            { type: 'ESModule', path: `${BUILD_DIR}/index.js` },
+            ...readdirSync(BUILD_DIR)
+              .filter((f) => f.endsWith('.md') && f !== 'README.md')
+              .map((f) => ({ type: 'Text', path: `${BUILD_DIR}/${f}` })),
+          ],
+          compatibilityDate: '2026-09-15',
+          bindings,
+          d1Databases: { DB: 'e2e-db' },
+          serviceBindings: { AI: 'ai-mock' },
+          outboundService: outbound,
+        },
+        {
+          name: 'ai-mock',
+          modules: true,
+          script: AI_MOCK_SCRIPT,
+          compatibilityDate: '2026-09-15',
+          outboundService: outbound,
+        },
+      ],
     }),
   );
   await mf.ready;
@@ -264,6 +304,14 @@ export async function startBot({ vars = {} } = {}) {
         message: { message_id: ++messageId, date: 1, from: { id: from, is_bot: false }, chat: { id: from, type: 'private' }, text },
       });
     },
+    async sendVoice({ duration = 12, fileSize = 6, from = OWNER, asAudio = false } = {}) {
+      const file = { file_id: 'voice_1', duration, mime_type: asAudio ? 'audio/mpeg' : 'audio/ogg', file_size: fileSize };
+      return bot.post({
+        update_id: ++updateId,
+        message: { message_id: ++messageId, date: 1, from: { id: from }, chat: { id: from, type: 'private' }, ...(asAudio ? { audio: file } : { voice: file }) },
+      });
+    },
+    ai: () => calls.filter((c) => c.host === 'ai.mock'),
     async sendPhoto({ caption, from = OWNER, asDocument = false } = {}) {
       const media = asDocument
         ? { document: { file_id: 'doc_1', file_name: 'design.png', mime_type: 'image/png', file_size: 6 } }

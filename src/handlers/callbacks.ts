@@ -16,6 +16,7 @@ import { PLATFORM_LABEL, type Platform } from '../env.ts';
 import { listIdeas, reclassifyIdea } from '../ideas.ts';
 import { pickSuggestion, runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
+import { retryLastVoice } from '../voice.ts';
 import { CB, draftKeyboard, isEditable, scheduleKeyboard, statusLine } from '../preview.ts';
 import { confirmPublish, requestConfirmation } from '../publishing.ts';
 import {
@@ -229,6 +230,7 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         else if (a === 'g') await regenerateDraft(ctx, id);
         else if (a === 'p') await runPlan(ctx);
         else if (a === 's') await runStats(ctx);
+        else if (a === 'v') await retryLastVoice(ctx);
         else if (a === 'e') {
           const notes = await getState(db, reviseNotesKey(id));
           if (notes) await reviseDraft(ctx, id, notes);

@@ -2,6 +2,8 @@
 
 export interface Env {
   DB: D1Database;
+  /** Workers AI لتفريغ الرسائل الصوتية (وافق عليه المالك — NOTES.md القسم 6). */
+  AI: Ai;
 
   // أسرار (wrangler secret put)
   TELEGRAM_BOT_TOKEN: string;

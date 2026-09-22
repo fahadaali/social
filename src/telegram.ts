@@ -31,6 +31,14 @@ export interface TgDocument {
   file_size?: number;
 }
 
+/** رسالة صوتية (voice) أو ملف صوتي (audio). */
+export interface TgAudioFile {
+  file_id: string;
+  duration?: number;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface TgMessage {
   message_id: number;
   date: number;
@@ -40,8 +48,8 @@ export interface TgMessage {
   caption?: string;
   photo?: TgPhotoSize[];
   document?: TgDocument;
-  voice?: unknown;
-  audio?: unknown;
+  voice?: TgAudioFile;
+  audio?: TgAudioFile;
 }
 
 export interface TgCallbackQuery {

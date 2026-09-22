@@ -36,8 +36,15 @@ function savedKeyboard(ideaId: number, withRetry: boolean): InlineKeyboard {
   return { inline_keyboard: [row] };
 }
 
+export interface ReportOptions {
+  /** تعديل رسالة قائمة (مثل «أفرّغ الرسالة الصوتية…») بدل إرسال رسالة جديدة. */
+  editMessageId?: number | undefined;
+  /** سطر إضافي في الرد، مثل النص المفرّغ للتحقق منه. */
+  extra?: string | undefined;
+}
+
 /** يصنّف الفكرة ويرد: «حُفظت الفكرة #12 (محور: الحوكمة)» مع زر «صُغها الآن». */
-async function classifyAndReport(ctx: Ctx, idea: Idea, editMessageId?: number): Promise<void> {
+async function classifyAndReport(ctx: Ctx, idea: Idea, opts: ReportOptions = {}): Promise<void> {
   let text: string;
   let keyboard: InlineKeyboard;
   try {
@@ -50,13 +57,14 @@ async function classifyAndReport(ctx: Ctx, idea: Idea, editMessageId?: number): 
     text = `حُفظت الفكرة #${idea.id} (لم يُصنَّف محورها: ${claudeErrorMessage(err)})`;
     keyboard = savedKeyboard(idea.id, true);
   }
-  if (editMessageId) await editMessageText(ctx.env, ctx.chatId, editMessageId, text, keyboard);
+  if (opts.extra) text += `\n\n${opts.extra}`;
+  if (opts.editMessageId) await editMessageText(ctx.env, ctx.chatId, opts.editMessageId, text, keyboard);
   else await sendMessage(ctx.env, ctx.chatId, text, keyboard);
 }
 
-export async function saveIdea(ctx: Ctx, text: string, source: IdeaSource): Promise<void> {
+export async function saveIdea(ctx: Ctx, text: string, source: IdeaSource, opts: ReportOptions = {}): Promise<void> {
   const idea = await insertIdea(ctx.env.DB, text.trim(), source);
-  await classifyAndReport(ctx, idea);
+  await classifyAndReport(ctx, idea, opts);
 }
 
 export async function reclassifyIdea(ctx: Ctx, ideaId: number, messageId: number): Promise<void> {
@@ -65,7 +73,7 @@ export async function reclassifyIdea(ctx: Ctx, ideaId: number, messageId: number
     await sendMessage(ctx.env, ctx.chatId, `لم أجد الفكرة #${ideaId}.`);
     return;
   }
-  await classifyAndReport(ctx, idea, messageId);
+  await classifyAndReport(ctx, idea, { editMessageId: messageId });
 }
 
 /** /ideas: آخر 10 أفكار بحالة new، لكل فكرة زر «صُغها». */

@@ -10,7 +10,7 @@
 | المرحلة | الحالة |
 |---|---|
 | 1. الأساس | منفّذة ومختبرة محلياً |
-| 2. الانتظام | منفّذة ومختبرة محلياً: الخطة الأسبوعية، و`/plan` و`/queue` و`/usage` و`/pause` و`/resume`. **الرسائل الصوتية بانتظار موافقتك** على خدمة التفريغ (التفاصيل والتكلفة في `NOTES.md` القسم 6) |
+| 2. الانتظام | منفّذة ومختبرة محلياً: الخطة الأسبوعية، و`/plan` و`/queue` و`/usage` و`/pause` و`/resume`، والرسائل الصوتية عبر Whisper في Workers AI (التكلفة في `NOTES.md` القسم 6) |
 | 3. التحليلات | منفّذة ومختبرة محلياً: `/stats`، وتقرير الخميس، واستخدام المقاييس في الخطة |
 
 كل المراحل تنتظر النشر والتجربة على حساباتك الحقيقية (أسبوع `DRY_RUN`).
@@ -21,6 +21,7 @@
 |---|---|
 | `/start` و`/help` | الترحيب والمساعدة وتحذيرات الإعداد |
 | أي نص | فكرة جديدة تُحفظ ويُصنّف محورها، مع زر «صُغها الآن» |
+| رسالة صوتية | تُفرَّغ بالعربية (حتى 5 دقائق)، ثم تُحفظ فكرةً ويظهر النص للتحقق منه |
 | `/ideas` | آخر 10 أفكار جديدة، لكل فكرة زر «صُغها» |
 | `/plan` | 3 موضوعات مقترحة (تستفيد من آخر مقاييس) |
 | `/queue` | المسودات المعلّقة والمجدولة، مع زر «عرض» |
@@ -77,6 +78,8 @@ npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put SOCIALAPI_KEY
 ```
 
+ربط Workers AI (`[ai]` في `wrangler.toml`) لتفريغ الرسائل الصوتية لا يحتاج أي مفتاح أو إعداد إضافي.
+
 **النشر التلقائي من GitHub (Workers Builds):** من لوحة Cloudflare: Workers & Pages ← Create ← Import a repository، واختر هذا المستودع، وسمِّ الـ Worker باسم `social` (يطابق `name` في `wrangler.toml`). اضبط أمر النشر (Deploy command) على `npm run deploy` حتى تُطبَّق الترحيلات الجديدة تلقائياً. بعدها يُنشر كل دفع (push) إلى الفرع الرئيسي.
 
 ### 6. تفعيل الـ webhook
@@ -102,7 +105,7 @@ npm test            # اختبارات الوحدات (Node test runner)
 npm run test:e2e    # اختبارات طرفية: الـ Worker المجمّع داخل workerd مع D1 محلية وخوادم وهمية
 npm run check       # الكل
 ```
-لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار في ملف `.dev.vars`، وهو مستثنى من git.
+لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار في ملف `.dev.vars`، وهو مستثنى من git. ربط Workers AI يعمل عن بُعد دائماً، فيحتاج `npx wrangler login`.
 
 ## البنية
 
@@ -120,6 +123,7 @@ src/ideas.ts · drafting.ts · publishing.ts · images.ts · planning.ts
 src/status.ts           /queue · /usage · /pause · /resume
 src/analytics.ts        جمع المقاييس، أداء المحاور، لقطة المقاييس للخطة
 src/reporting.ts        /stats والتقرير الأسبوعي
+src/voice.ts            تفريغ الرسائل الصوتية (Whisper في Workers AI)
 src/handlers/           messages · callbacks · cron
 src/prompts/            classify · draft · revise · plan · report · shared
 migrations/             0001_init.sql (من SPEC حرفياً) + 0002_draft_notes.sql

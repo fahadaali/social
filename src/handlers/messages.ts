@@ -11,6 +11,7 @@ import { runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
 import { setRemindersPaused, showQueue, showUsage } from '../status.ts';
 import { sendMessage, type TgMessage } from '../telegram.ts';
+import { handleVoice } from '../voice.ts';
 
 const COMMANDS_HELP = `الأوامر:
 /ideas — آخر 10 أفكار جديدة، لكل فكرة زر «صُغها»
@@ -38,7 +39,7 @@ function welcome(env: Env): string {
   return [
     'أهلاً بك. أنا مساعدك للنشر على X ولينكدن.',
     [
-      '• أرسل أي فكرة نصاً (أو صورة مع تعليق) وسأحفظها في بنك الأفكار وأصنّف محورها.',
+      '• أرسل أي فكرة نصاً أو رسالة صوتية (أو صورة مع تعليق) وسأحفظها في بنك الأفكار وأصنّف محورها.',
       '• اضغط «صُغها الآن» لأجهّز ثريد X ونص لينكدن وسكربت سناب.',
       '• لا يُنشر ولا يُجدول أي شيء إلا بعد ضغطك «تأكيد».',
     ].join('\n'),
@@ -53,7 +54,7 @@ function help(env: Env): string {
   return [
     'طريقة العمل:',
     [
-      '1) أرسل فكرتك نصاً ← أحفظها وأصنّف محورها.',
+      '1) أرسل فكرتك نصاً أو رسالة صوتية ← أحفظها (بعد تفريغ الصوت) وأصنّف محورها.',
       '2) «صُغها الآن» ← مسودة فيها ثريد X ونص لينكدن وسكربت سناب.',
       '3) أزرار المسودة: ✅ انشر الآن، 🕒 جدول، ✏️ عدّل (اكتب ملاحظاتك)، 🔁 صياغة جديدة، 🖼 أرفق صورة، X/LinkedIn لتفعيل المنصات، 🗑 تجاهل.',
       '4) قبل أي نشر أو جدولة يظهر تأكيد أخير مع رصيدك المتبقي.',
@@ -141,12 +142,10 @@ export async function handleMessage(ctx: Ctx, msg: TgMessage): Promise<void> {
     return;
   }
 
-  if (msg.voice || msg.audio) {
-    await sendMessage(
-      ctx.env,
-      ctx.chatId,
-      'الرسائل الصوتية ستُدعم في المرحلة التالية بعد اعتماد خدمة التفريغ. أرسل الفكرة نصاً الآن.',
-    );
+  const audio = msg.voice ?? msg.audio;
+  if (audio) {
+    await clearAwaiting(db);
+    await handleVoice(ctx, audio);
     return;
   }
 
