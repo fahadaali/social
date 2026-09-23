@@ -3,15 +3,16 @@
 import { exportBackup } from '../backup.ts';
 import { PILLARS, VOICE_FILLED } from '../content.ts';
 import type { Ctx } from '../context.ts';
-import { clearAwaiting, getAwaiting } from '../db.ts';
+import { clearAwaiting, getAwaiting, remindersPaused } from '../db.ts';
 import { reviseDraft } from '../drafting.ts';
 import { accountId, isDryRun, type Env } from '../env.ts';
 import { listIdeas, saveIdea } from '../ideas.ts';
 import { attachImage, pickImage } from '../images.ts';
+import { BOT_COMMANDS, menuCommand, menuKeyboard } from '../menu.ts';
 import { runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
 import { setRemindersPaused, showQueue, showUsage } from '../status.ts';
-import { sendMessage, type TgMessage } from '../telegram.ts';
+import { sendMessage, setChatCommands, TelegramError, type TgMessage } from '../telegram.ts';
 import { handleVoice } from '../voice.ts';
 
 const COMMANDS_HELP = `الأوامر:
@@ -44,6 +45,7 @@ function welcome(env: Env): string {
       '• أرسل أي فكرة نصاً أو رسالة صوتية (أو صورة مع تعليق) وسأحفظها في بنك الأفكار وأصنّف محورها.',
       '• اضغط «صُغها الآن» لأجهّز ثريد X ونص لينكدن وسكربت سناب.',
       '• لا يُنشر ولا يُجدول أي شيء إلا بعد ضغطك «تأكيد».',
+      '• للوصول السريع: الأزرار أسفل المحادثة، أو زر «القائمة» بجوار خانة الكتابة.',
     ].join('\n'),
     COMMANDS_HELP,
     warnings.join('\n'),
@@ -70,14 +72,24 @@ function help(env: Env): string {
     .join('\n\n');
 }
 
+/** قائمة زر «القائمة» لمحادثة المالك؛ فشلها لا يمنع الترحيب. */
+async function syncCommandMenu(ctx: Ctx): Promise<void> {
+  try {
+    await setChatCommands(ctx.env, ctx.chatId, BOT_COMMANDS);
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'set_commands_failed', code: err instanceof TelegramError ? err.code : 'unknown' }));
+  }
+}
+
 async function handleCommand(ctx: Ctx, text: string): Promise<void> {
   const command = (text.split(/\s+/)[0] ?? '').split('@')[0]?.toLowerCase();
   switch (command) {
     case '/start':
-      await sendMessage(ctx.env, ctx.chatId, welcome(ctx.env));
+      await syncCommandMenu(ctx);
+      await sendMessage(ctx.env, ctx.chatId, welcome(ctx.env), menuKeyboard(await remindersPaused(ctx.env.DB)));
       return;
     case '/help':
-      await sendMessage(ctx.env, ctx.chatId, help(ctx.env));
+      await sendMessage(ctx.env, ctx.chatId, help(ctx.env), menuKeyboard(await remindersPaused(ctx.env.DB)));
       return;
     case '/ideas':
       await listIdeas(ctx);
@@ -112,9 +124,11 @@ export async function handleMessage(ctx: Ctx, msg: TgMessage): Promise<void> {
   const db = ctx.env.DB;
   const text = msg.text?.trim();
 
-  if (text?.startsWith('/')) {
+  // الأوامر، وأزرار اللوحة الثابتة (تصل نصاً فتُعامل أمراً ولا تُحفظ فكرةً)
+  const command = text?.startsWith('/') ? text : text ? menuCommand(text) : null;
+  if (command) {
     await clearAwaiting(db);
-    await handleCommand(ctx, text);
+    await handleCommand(ctx, command);
     return;
   }
 

@@ -111,6 +111,12 @@ export const STATE_KEYS = {
   metricsSnapshot: 'metrics_snapshot',
 } as const;
 
+/** هل تذكيرات الانقطاع موقوفة (/pause)؟ */
+export async function remindersPaused(db: D1Database): Promise<boolean> {
+  const v = await getState(db, STATE_KEYS.remindersPaused);
+  return v === '1' || v === 'true';
+}
+
 export async function getState(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM state WHERE key = ?').bind(key).first<{ value: string | null }>();
   return row?.value ?? null;

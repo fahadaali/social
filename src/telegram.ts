@@ -79,6 +79,19 @@ export interface InlineKeyboard {
 
 export const EMPTY_KEYBOARD: InlineKeyboard = { inline_keyboard: [] };
 
+/** لوحة أزرار ثابتة أسفل المحادثة (ReplyKeyboardMarkup)؛ ضغطة الزر تصل رسالةً نصها نص الزر. */
+export interface ReplyKeyboard {
+  keyboard: { text: string }[][];
+  is_persistent?: boolean;
+  resize_keyboard?: boolean;
+  input_field_placeholder?: string;
+}
+
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
 /** تنسيق جزء من النص؛ offset وlength بوحدات UTF-16 (وهي فهارس النص في JavaScript). */
 export interface MessageEntity {
   type: 'pre' | 'code' | 'bold';
@@ -141,7 +154,7 @@ export function sendMessage(
   env: Env,
   chatId: number | string,
   text: string,
-  keyboard?: InlineKeyboard,
+  keyboard?: InlineKeyboard | ReplyKeyboard,
   entities?: MessageEntity[],
 ): Promise<TgMessage> {
   // القص يفسد مواضع التنسيق، فالنص المنسّق يجب أن يأتي ضمن الحد أصلاً
@@ -212,6 +225,11 @@ export async function clearKeyboard(env: Env, chatId: number | string, messageId
   } catch (err) {
     console.warn('clear keyboard failed', err instanceof TelegramError ? err.code : 'unknown');
   }
+}
+
+/** قائمة الأوامر في زر «القائمة» بجوار خانة الكتابة، لمحادثة واحدة فقط (لا تظهر لغيرها). */
+export async function setChatCommands(env: Env, chatId: number, commands: BotCommand[]): Promise<void> {
+  await call(env, 'setMyCommands', { commands, scope: { type: 'chat', chat_id: chatId } });
 }
 
 export async function answerCallback(env: Env, callbackId: string, text?: string, alert = false): Promise<void> {

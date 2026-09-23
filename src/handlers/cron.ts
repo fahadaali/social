@@ -3,7 +3,14 @@
 import { claudeErrorMessage, ClaudeError } from '../claude.ts';
 import { collectPerformance, loadSnapshot, saveSnapshot } from '../analytics.ts';
 import { CRON_BUDGET_MS, makeCtx, type Ctx } from '../context.ts';
-import { cleanupProcessedUpdates, countUpcomingScheduled, getState, listDraftsByStatus, STATE_KEYS } from '../db.ts';
+import {
+  cleanupProcessedUpdates,
+  countUpcomingScheduled,
+  getState,
+  listDraftsByStatus,
+  remindersPaused,
+  STATE_KEYS,
+} from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
 import { CB } from '../preview.ts';
 import { generatePlan } from '../planning.ts';
@@ -39,8 +46,7 @@ const REMINDER_SHOWN_DRAFTS = 3;
  */
 export async function maybeRemind(ctx: Ctx): Promise<boolean> {
   const db = ctx.env.DB;
-  const paused = await getState(db, STATE_KEYS.remindersPaused);
-  if (paused === '1' || paused === 'true') return false;
+  if (await remindersPaused(db)) return false;
   if ((await countUpcomingScheduled(db)) > 0) return false;
 
   const last = await getState(db, STATE_KEYS.lastPublishedAt);

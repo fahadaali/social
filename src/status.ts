@@ -3,6 +3,7 @@
 import type { Ctx } from './context.ts';
 import { deleteState, listDraftsByStatus, setState, STATE_KEYS, type Draft } from './db.ts';
 import { isDryRun, monthlyPostLimit } from './env.ts';
+import { menuKeyboard } from './menu.ts';
 import { CB, versionLabel } from './preview.ts';
 import { computeCredits } from './publishing.ts';
 import { getUsage, socialApiErrorMessage } from './socialapi.ts';
@@ -76,7 +77,7 @@ export async function showUsage(ctx: Ctx): Promise<void> {
   await sendMessage(ctx.env, ctx.chatId, text);
 }
 
-/** /pause و /resume: إيقاف تذكير الانقطاع اليومي واستئنافه (SPEC §9 ب). */
+/** /pause و /resume: إيقاف تذكير الانقطاع اليومي واستئنافه (SPEC §9 ب). الرد يحدّث زر التذكير في اللوحة. */
 export async function setRemindersPaused(ctx: Ctx, paused: boolean): Promise<void> {
   if (paused) await setState(ctx.env.DB, STATE_KEYS.remindersPaused, '1');
   else await deleteState(ctx.env.DB, STATE_KEYS.remindersPaused);
@@ -84,7 +85,8 @@ export async function setRemindersPaused(ctx: Ctx, paused: boolean): Promise<voi
     ctx.env,
     ctx.chatId,
     paused
-      ? '⏸ أوقفت تذكيرات انقطاع النشر. الخطة الأسبوعية وتقرير الأداء مستمران. أرسل /resume للاستئناف.'
+      ? '⏸ أوقفت تذكيرات انقطاع النشر. الخطة الأسبوعية وتقرير الأداء مستمران. للاستئناف: زر «▶️ استأنف التذكير» أو /resume.'
       : '▶️ استؤنفت تذكيرات انقطاع النشر.',
+    menuKeyboard(paused),
   );
 }
