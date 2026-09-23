@@ -57,7 +57,7 @@ test('/help lists every command and the automatic schedule', () =>
     for (const c of ['/ideas', '/plan', '/queue', '/stats', '/usage', '/pause', '/resume', '/help']) {
       assert.ok(msg.body.text.includes(c), c);
     }
-    assert.match(msg.body.text, /خطة أسبوعية الأحد 8 ص، وتقرير أداء الخميس 5 م/);
+    assert.match(msg.body.text, /خطة أسبوعية مع أحداث الأسبوع الأحد 8 ص، ونشرة أحداث الأربعاء 8 ص، وتقرير أداء الخميس 5 م/);
   }));
 
 test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» for each resends a preview with its buttons', () =>

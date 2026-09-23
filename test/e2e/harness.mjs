@@ -47,6 +47,7 @@ export function draftOutput(over = {}) {
 }
 
 function schemaKind(body) {
+  if ((body?.tools ?? []).some((t) => t?.name === 'web_search')) return 'events';
   const props = body?.output_config?.format?.schema?.properties ?? {};
   if ('x_segments' in props) return 'draft';
   if ('suggestions' in props) return 'plan';
@@ -74,6 +75,51 @@ function defaultAnthropic(body, kind) {
   return draftOutput();
 }
 
+// ---------- ردود بحث الويب (أداة web_search) ----------
+
+export const DEFAULT_EVENTS = [
+  {
+    url: 'https://www.cma.gov.sa/news/governance-update',
+    title: 'هيئة السوق المالية تحدّث لائحة حوكمة الشركات',
+    text: 'هيئة السوق المالية تحدّث لائحة حوكمة الشركات (21 سبتمبر 2026): تعديلات على لجان المراجعة، وتهم مجالس الإدارات.',
+  },
+  {
+    url: 'https://example.com/riyadh-season',
+    title: 'انطلاق موسم الرياض',
+    text: 'الرائج: انطلاق موسم الرياض (20 سبتمبر 2026)، ويمكن ربطه بحوكمة الفعاليات الكبرى.',
+  },
+];
+
+/** محتوى رد بحث: استدعاء البحث ونتائجه، ثم الإجابة النهائية بمصادرها (citations). */
+export function searchContent(items = DEFAULT_EVENTS, { id = 'srvtoolu_1', preface = true } = {}) {
+  return [
+    ...(preface ? [{ type: 'text', text: 'سأبحث عن أحداث الأسبوع.' }] : []),
+    { type: 'server_tool_use', id, name: 'web_search', input: { query: 'حوكمة الشركات السعودية' } },
+    {
+      type: 'web_search_tool_result',
+      tool_use_id: id,
+      content: items.map((it) => ({ type: 'web_search_result', url: it.url, title: it.title, encrypted_content: 'enc', page_age: '21 سبتمبر 2026' })),
+    },
+    ...items.map((it, i) => ({
+      type: 'text',
+      text: `${i ? '\n' : ''}- ${it.text}`,
+      citations: [{ type: 'web_search_result_location', url: it.url, title: it.title, cited_text: it.text.slice(0, 40), encrypted_index: 'idx' }],
+    })),
+  ];
+}
+
+export function searchMessage(content = searchContent(), stop = 'end_turn') {
+  return {
+    id: 'msg_search',
+    type: 'message',
+    role: 'assistant',
+    model: 'mock',
+    content,
+    stop_reason: stop,
+    usage: { input_tokens: 5000, output_tokens: 600, server_tool_use: { web_search_requests: 2 } },
+  };
+}
+
 export function anthropicMessage(obj, stop = 'end_turn') {
   return {
     id: 'msg_test',
@@ -97,8 +143,10 @@ export function anthropicMessage(obj, stop = 'end_turn') {
 export async function startBot({ vars = {}, migrate = true, withDb = true } = {}) {
   const calls = [];
   const mocks = {
-    // (body, kind, n) => {status, json} | object (يُلف كرسالة ناجحة)
+    // (body, kind, n) => {status, json} | object (يُلف كرسالة ناجحة)؛ لغير طلبات البحث
     anthropic: [],
+    // طلبات بحث الويب: (body, n) => {status, json} | رسالة كاملة؛ الافتراضي searchMessage()
+    search: [],
     usage: { posts_used: 4, posts_limit: 10, period_end: '2026-10-15T00:00:00Z' },
     // GET /v1/accounts؛ الافتراضي يطابق SOCIALAPI_X_ACCOUNT_ID و SOCIALAPI_LINKEDIN_ACCOUNT_ID
     accounts: {
@@ -191,6 +239,12 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
       const kind = schemaKind(call.body);
       call.kind = kind;
       const n = calls.filter((c) => c.kind === kind).length;
+      if (kind === 'events') {
+        const custom = mocks.search.shift();
+        const out = custom ? custom(call.body, n) : searchMessage();
+        if (out && typeof out.status === 'number') return json(out.status, out.json);
+        return json(200, out);
+      }
       const custom = mocks.anthropic.shift();
       const out = custom ? custom(call.body, kind, n) : defaultAnthropic(call.body, kind);
       if (out && typeof out.status === 'number') return json(out.status, out.json);

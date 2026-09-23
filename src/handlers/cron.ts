@@ -12,9 +12,11 @@ import {
   STATE_KEYS,
 } from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
+import { eventsErrorMessage, researchEvents } from '../events.ts';
 import { ensureSchema } from '../migrations.ts';
 import { CB } from '../preview.ts';
-import { generatePlan } from '../planning.ts';
+import { generateEventsPlan, generatePlan } from '../planning.ts';
+import type { EventDigest } from '../prompts/events.ts';
 import { followUpPosts } from '../publishing.ts';
 import { buildReport } from '../reporting.ts';
 import { SocialApiError, socialApiErrorMessage } from '../socialapi.ts';
@@ -26,9 +28,16 @@ import { daysBetween, parseUtc } from '../time.ts';
 // توقيت Cron بـ UTC؛ الرياض = UTC+3 (SPEC §9)
 export const CRON_DAILY = '0 6 * * *'; // يومياً 9:00 ص
 export const CRON_WEEKLY_PLAN = '0 5 * * 0'; // الأحد 8:00 ص
+export const CRON_MIDWEEK_EVENTS = '0 5 * * 3'; // الأربعاء 8:00 ص (NOTES.md القسم 11)
 export const CRON_WEEKLY_REPORT = '0 14 * * 4'; // الخميس 5:00 م
 
 const SNAPSHOT_MAX_AGE_DAYS = 7;
+
+// البحث في الويب قد يستغرق دقائق، ومهلة Cron في Cloudflare 15 دقيقة؛ نترك للخطة دقيقة بعد البحث
+const EVENTS_TASK_BUDGET_MS = 6 * 60_000;
+const PLAN_RESERVE_MS = 60_000;
+const SUNDAY_EVENT_DAYS = 7;
+const MIDWEEK_EVENT_DAYS = 4;
 
 /** ملخص خطأ قصير بلا تفاصيل حساسة. */
 export function errorSummary(err: unknown): string {
@@ -99,6 +108,7 @@ async function daily(ctx: Ctx): Promise<string[]> {
 /**
  * الخطة الأسبوعية (SPEC §9): 3 موضوعات مقترحة لكل منها زر «صُغها».
  * تُحدَّث لقطة المقاييس أولاً إن كانت أقدم من أسبوع، وفشلها لا يوقف الخطة.
+ * ثم يُبحث عن أحداث الأسبوع ليُبنى عليها اقتراح أو اثنان؛ فشل البحث لا يوقف الخطة بل يُذكر في آخرها.
  */
 async function weeklyPlan(ctx: Ctx): Promise<string[]> {
   try {
@@ -109,7 +119,32 @@ async function weeklyPlan(ctx: Ctx): Promise<string[]> {
   } catch (err) {
     console.warn(JSON.stringify({ evt: 'snapshot_refresh_failed', err: errorSummary(err) }));
   }
-  const plan = await generatePlan(ctx, '📅 خطة الأسبوع — اقتراحات للنشر:');
+  let events: EventDigest | null = null;
+  let note = '';
+  try {
+    events = await researchEvents(ctx, SUNDAY_EVENT_DAYS, ctx.deadline - PLAN_RESERVE_MS);
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'events_failed', err: errorSummary(err) }));
+    note = `\n\n⚠️ لم أستطع البحث عن أحداث الأسبوع هذه المرة: ${eventsErrorMessage(err)}`;
+  }
+  const plan = await generatePlan(ctx, '📅 خطة الأسبوع — اقتراحات للنشر:', events);
+  await sendMessage(ctx.env, ctx.chatId, plan.text + note, plan.keyboard);
+  return [];
+}
+
+/** نشرة الأربعاء (طلب المالك): اقتراحات من أحداث الأيام الأخيرة وحدها، أو سطر يقول إنه لا جديد. */
+async function midweekEvents(ctx: Ctx): Promise<string[]> {
+  let events: EventDigest | null;
+  try {
+    events = await researchEvents(ctx, MIDWEEK_EVENT_DAYS, ctx.deadline - PLAN_RESERVE_MS);
+  } catch (err) {
+    return [`البحث عن الأحداث: ${eventsErrorMessage(err)}`];
+  }
+  const plan = events ? await generateEventsPlan(ctx, events) : null;
+  if (!plan) {
+    await sendMessage(ctx.env, ctx.chatId, '📰 لا أحداث جديدة مهمة منذ الأحد تستحق منشوراً.');
+    return [];
+  }
   await sendMessage(ctx.env, ctx.chatId, plan.text, plan.keyboard);
   return [];
 }
@@ -123,11 +158,14 @@ async function weeklyReport(ctx: Ctx): Promise<string[]> {
 interface CronTask {
   name: string;
   run: (ctx: Ctx) => Promise<string[]>;
+  /** مهلة المهمة؛ الافتراض CRON_BUDGET_MS. */
+  budgetMs?: number;
 }
 
 const TASKS: Record<string, CronTask> = {
   [CRON_DAILY]: { name: 'المتابعة اليومية', run: daily },
-  [CRON_WEEKLY_PLAN]: { name: 'الخطة الأسبوعية', run: weeklyPlan },
+  [CRON_WEEKLY_PLAN]: { name: 'الخطة الأسبوعية', run: weeklyPlan, budgetMs: EVENTS_TASK_BUDGET_MS },
+  [CRON_MIDWEEK_EVENTS]: { name: 'نشرة الأحداث', run: midweekEvents, budgetMs: EVENTS_TASK_BUDGET_MS },
   [CRON_WEEKLY_REPORT]: { name: 'تقرير الأداء الأسبوعي', run: weeklyReport },
 };
 
@@ -142,7 +180,7 @@ export async function runScheduled(env: Env, cron: string): Promise<void> {
     console.error(JSON.stringify({ evt: 'cron_skipped', reason: 'ALLOWED_TELEGRAM_USER_ID not set' }));
     return;
   }
-  const ctx = makeCtx(env, Number(owner), CRON_BUDGET_MS);
+  const ctx = makeCtx(env, Number(owner), task.budgetMs ?? CRON_BUDGET_MS);
   let failures: string[];
   try {
     await ensureSchema(env.DB);

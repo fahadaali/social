@@ -54,6 +54,7 @@ test('every object in the JSON schemas forbids additional properties (structured
   check(DRAFT_SCHEMA);
   check(classifySchema(['أ']));
   check(planSchema([]));
+  check(planSchema([], true));
 });
 
 test('parseClassify enforces the pillar list and trims long summaries', () => {

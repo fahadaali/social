@@ -4,7 +4,8 @@ import { PLATFORMS, type Platform } from './env.ts';
 import type { DraftContent } from './text.ts';
 
 export type IdeaStatus = 'new' | 'drafted' | 'published' | 'archived';
-export type IdeaSource = 'text' | 'voice' | 'photo' | 'plan';
+/** plan: موضوع جديد من الخطة، event: موضوع مبني على حدث من بحث الويب (NOTES.md القسم 11). */
+export type IdeaSource = 'text' | 'voice' | 'photo' | 'plan' | 'event';
 export type DraftStatus = 'pending' | 'scheduled' | 'publishing' | 'published' | 'partial' | 'failed' | 'rejected';
 
 export interface Idea {
@@ -108,6 +109,10 @@ export const STATE_KEYS = {
   lastPublishedAt: 'last_published_at',
   remindersPaused: 'reminders_paused',
   lastPlan: 'last_plan',
+  /** اقتراحات نشرة الأربعاء، منفصلة حتى تبقى أزرار خطة الأحد صالحة. */
+  lastEventsPlan: 'last_events_plan',
+  /** الأحداث المقترحة مؤخراً، حتى لا يعيدها البحث التالي. */
+  recentEvents: 'recent_events',
   metricsSnapshot: 'metrics_snapshot',
 } as const;
 
