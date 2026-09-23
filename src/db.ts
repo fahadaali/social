@@ -204,6 +204,12 @@ export async function setIdeaStatus(db: D1Database, id: number, status: IdeaStat
   await db.prepare('UPDATE ideas SET status = ? WHERE id = ?').bind(status, id).run();
 }
 
+/** ينقل الفكرة من حالة إلى أخرى فقط إن كانت ما تزال في الحالة المتوقعة. */
+export async function transitionIdea(db: D1Database, id: number, from: IdeaStatus, to: IdeaStatus): Promise<boolean> {
+  const r = await db.prepare('UPDATE ideas SET status = ? WHERE id = ? AND status = ?').bind(to, id, from).run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
 export async function listNewIdeas(db: D1Database, limit: number, oldestFirst = false): Promise<Idea[]> {
   const order = oldestFirst ? 'ASC' : 'DESC';
   const r = await db
@@ -314,6 +320,30 @@ export async function claimDraft(
   return (r.meta.changes ?? 0) > 0;
 }
 
+/** موعد جديد لمسودة مجدولة، بشرط أنها ما تزال مجدولة على المنشور نفسه. */
+export async function setScheduledAt(db: D1Database, id: number, postId: string, scheduledAt: string): Promise<boolean> {
+  const r = await db
+    .prepare(
+      `UPDATE drafts SET scheduled_at = ?, updated_at = datetime('now')
+       WHERE id = ? AND status = 'scheduled' AND socialapi_post_id = ?`,
+    )
+    .bind(scheduledAt, id, postId)
+    .run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
+/** بعد إلغاء الجدولة: تعود المسودة معلّقة بلا منشور، بشرط أنها ما تزال مجدولة على المنشور نفسه. */
+export async function unscheduleDraft(db: D1Database, id: number, postId: string): Promise<boolean> {
+  const r = await db
+    .prepare(
+      `UPDATE drafts SET status = 'pending', socialapi_post_id = NULL, scheduled_at = NULL, updated_at = datetime('now')
+       WHERE id = ? AND status = 'scheduled' AND socialapi_post_id = ?`,
+    )
+    .bind(id, postId)
+    .run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
 export async function listDraftsByStatus(
   db: D1Database,
   statuses: DraftStatus[],
@@ -364,4 +394,14 @@ export async function countUpcomingScheduled(db: D1Database): Promise<number> {
     .prepare("SELECT COUNT(*) AS n FROM drafts WHERE status = 'scheduled' AND scheduled_at > datetime('now')")
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+// ---------- النسخة الاحتياطية ----------
+
+export async function allIdeas(db: D1Database): Promise<Idea[]> {
+  return (await db.prepare('SELECT * FROM ideas ORDER BY id').all<Idea>()).results;
+}
+
+export async function allDrafts(db: D1Database): Promise<Draft[]> {
+  return (await db.prepare('SELECT * FROM drafts ORDER BY id').all<DraftRow>()).results.map(rowToDraft);
 }

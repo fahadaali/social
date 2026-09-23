@@ -168,7 +168,7 @@ test('acceptance 5: ✏️ edit with notes revises only per the notes and bumps 
     const revise = bot.anthropic('draft').at(-1);
     assert.match(revise.body.messages[0].content, /<owner_notes>\nاجعل الافتتاحية أقصر واحذف الإيموجي\n<\/owner_notes>/);
     assert.match(revise.body.messages[0].content, /غيّر فقط ما تطلبه الملاحظات/);
-    const d = await bot.row('SELECT revision, telegram_message_id FROM drafts WHERE id = 1');
+    const d = await bot.row('SELECT revision FROM drafts WHERE id = 1');
     assert.equal(d.revision, 1);
     assert.equal((await bot.row("SELECT COUNT(*) AS n FROM state WHERE key = 'awaiting_edit'")).n, 0);
     assert.equal((await bot.row('SELECT COUNT(*) AS n FROM ideas')).n, 1, 'notes were not saved as a new idea');
@@ -177,7 +177,8 @@ test('acceptance 5: ✏️ edit with notes revises only per the notes and bumps 
       bot.tg('editMessageReplyMarkup').some((c) => c.body.message_id === oldPreviewId && c.body.reply_markup.inline_keyboard.length === 0),
       'old preview buttons removed',
     );
-    assert.notEqual(d.telegram_message_id, oldPreviewId);
+    // الأزرار الحيّة تنتقل إلى المعاينة الجديدة (كتابة D1 تلي تعديل الرسالة)
+    await bot.waitForRow('SELECT telegram_message_id AS m FROM drafts WHERE id = 1', [], (r) => r.m !== oldPreviewId, 'new preview id');
   }));
 
 test('🔁 regenerate asks for a different angle and bumps revision', () =>
@@ -413,7 +414,7 @@ test('🗑 reject marks the draft rejected and archives the idea', () =>
     assert.equal((await bot.row('SELECT status FROM ideas WHERE id = 1')).status, 'archived');
   }));
 
-test('/ideas lists new ideas with «صُغها» buttons', () =>
+test('/ideas lists new ideas with «صُغها» and «أرشف» buttons', () =>
   withBot({}, async (bot) => {
     await bot.sendText('فكرة أولى');
     await bot.settle();
@@ -421,7 +422,10 @@ test('/ideas lists new ideas with «صُغها» buttons', () =>
     await bot.settle();
     await bot.sendText('/ideas');
     const msg = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('💡 أحدث الأفكار')), 5000);
-    assert.deepEqual(msg.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ['fmt:2', 'fmt:1']);
+    assert.deepEqual(
+      msg.body.reply_markup.inline_keyboard.map((row) => row.map((b) => b.callback_data)),
+      [['fmt:2', 'arc:2'], ['fmt:1', 'arc:1']],
+    );
   }));
 
 // ---------- المهمة اليومية ----------

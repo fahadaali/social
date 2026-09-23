@@ -60,7 +60,7 @@ test('/help lists every command and the automatic schedule', () =>
     assert.match(msg.body.text, /خطة أسبوعية الأحد 8 ص، وتقرير أداء الخميس 5 م/);
   }));
 
-test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» resends a preview with its buttons', () =>
+test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» for each resends a preview with its buttons', () =>
   withBot({}, async (bot) => {
     const pending = await seedDraft(bot, 'pending', { messageId: 4242 });
     await seedDraft(bot, 'failed');
@@ -72,7 +72,8 @@ test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» 
     assert.match(msg.body.text, /📝 المعلّقة \(الأحدث أولاً\):\n• #2 \(نسخة 1\) ⚠️ فشل نشرها — «تغريدة failed»\n• #1 \(نسخة 1\) — «تغريدة pending»/);
     assert.match(msg.body.text, /⏳ قيد النشر:\n• #4/);
     assert.ok(!msg.body.text.includes('#5'), 'published drafts are not queued');
-    assert.deepEqual(msg.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ['shw:2', 'shw:1']);
+    // بترتيب الأقسام: المجدولة ثم المعلّقة ثم قيد النشر
+    assert.deepEqual(msg.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ['shw:3', 'shw:2', 'shw:1', 'shw:4']);
 
     await bot.press(`shw:${pending}`);
     const preview = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📝 مسودة #1')), 10_000, 'preview');

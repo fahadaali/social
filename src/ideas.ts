@@ -3,9 +3,18 @@
 import { claudeErrorMessage, claudeJson } from './claude.ts';
 import { PILLARS, PILLARS_MD } from './content.ts';
 import type { Ctx } from './context.ts';
-import { getIdea, insertIdea, listNewIdeas, setIdeaPillar, type Idea, type IdeaSource } from './db.ts';
+import {
+  getIdea,
+  insertIdea,
+  listNewIdeas,
+  setIdeaPillar,
+  transitionIdea,
+  type Idea,
+  type IdeaSource,
+  type IdeaStatus,
+} from './db.ts';
 import { fastModel } from './env.ts';
-import { CB } from './preview.ts';
+import { archivedIdeaRow, CB, ideaListRow, replaceIdeaRow } from './preview.ts';
 import {
   CLASSIFY_MAX_TOKENS,
   classifySchema,
@@ -14,7 +23,7 @@ import {
   parseClassify,
   type ClassifyResult,
 } from './prompts/classify.ts';
-import { button, editMessageText, sendMessage, type InlineKeyboard } from './telegram.ts';
+import { button, editKeyboard, editMessageText, sendMessage, type InlineKeyboard, type TgMessage } from './telegram.ts';
 import { truncate } from './text.ts';
 
 export function classifyIdea(ctx: Ctx, text: string): Promise<ClassifyResult> {
@@ -76,7 +85,7 @@ export async function reclassifyIdea(ctx: Ctx, ideaId: number, messageId: number
   await classifyAndReport(ctx, idea, { editMessageId: messageId });
 }
 
-/** /ideas: آخر 10 أفكار بحالة new، لكل فكرة زر «صُغها». */
+/** /ideas: آخر 10 أفكار بحالة new، لكل فكرة زرّا «صُغها» و«أرشف». */
 export async function listIdeas(ctx: Ctx): Promise<void> {
   const ideas = await listNewIdeas(ctx.env.DB, 10);
   if (ideas.length === 0) {
@@ -84,8 +93,46 @@ export async function listIdeas(ctx: Ctx): Promise<void> {
     return;
   }
   const lines = ideas.map((i) => `#${i.id} — ${i.pillar ?? 'غير مصنّف'}\n${truncate(i.text, 140)}`);
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: ideas.map((i) => [button(`صُغها #${i.id}`, CB.formulate(i.id))]),
-  };
+  const keyboard: InlineKeyboard = { inline_keyboard: ideas.map((i) => ideaListRow(i.id)) };
   await sendMessage(ctx.env, ctx.chatId, `💡 أحدث الأفكار الجديدة:\n\n${lines.join('\n\n')}`, keyboard);
+}
+
+const IDEA_STATUS_AR: Record<IdeaStatus, string> = {
+  new: 'في البنك',
+  drafted: 'صيغت منها مسودة',
+  published: 'نُشرت',
+  archived: 'مؤرشفة',
+};
+
+export interface CallbackReply {
+  text: string;
+  alert: boolean;
+}
+
+async function moveIdea(
+  ctx: Ctx,
+  ideaId: number,
+  from: IdeaStatus,
+  to: IdeaStatus,
+  message: TgMessage | undefined,
+): Promise<CallbackReply | null> {
+  if (await transitionIdea(ctx.env.DB, ideaId, from, to)) {
+    // تتبدّل أزرار الفكرة في رسالة /ideas نفسها: «أرشف» ↔ «تراجع»
+    const kb = replaceIdeaRow(message?.reply_markup, ideaId, to === 'archived' ? archivedIdeaRow(ideaId) : ideaListRow(ideaId));
+    if (message && kb) await editKeyboard(ctx.env, ctx.chatId, message.message_id, kb);
+    return null;
+  }
+  const idea = await getIdea(ctx.env.DB, ideaId);
+  return { text: idea ? `حالة الفكرة #${ideaId} الآن: ${IDEA_STATUS_AR[idea.status]}.` : 'لم أجد هذه الفكرة.', alert: true };
+}
+
+/** «🗄 أرشف»: تخرج الفكرة من البنك دون حذف، ويمكن التراجع من الزر نفسه. */
+export async function archiveIdea(ctx: Ctx, ideaId: number, message?: TgMessage): Promise<CallbackReply> {
+  return (await moveIdea(ctx, ideaId, 'new', 'archived', message)) ?? { text: `🗄 أُرشفت الفكرة #${ideaId}`, alert: false };
+}
+
+export async function unarchiveIdea(ctx: Ctx, ideaId: number, message?: TgMessage): Promise<CallbackReply> {
+  return (
+    (await moveIdea(ctx, ideaId, 'archived', 'new', message)) ?? { text: `↩️ أُعيدت الفكرة #${ideaId} إلى البنك`, alert: false }
+  );
 }

@@ -50,6 +50,8 @@ export interface TgMessage {
   document?: TgDocument;
   voice?: TgAudioFile;
   audio?: TgAudioFile;
+  /** أزرار الرسالة كما هي لحظة الضغط (تصل مع callback_query لرسائل البوت). */
+  reply_markup?: InlineKeyboard;
 }
 
 export interface TgCallbackQuery {
@@ -77,6 +79,13 @@ export interface InlineKeyboard {
 
 export const EMPTY_KEYBOARD: InlineKeyboard = { inline_keyboard: [] };
 
+/** تنسيق جزء من النص؛ offset وlength بوحدات UTF-16 (وهي فهارس النص في JavaScript). */
+export interface MessageEntity {
+  type: 'pre' | 'code' | 'bold';
+  offset: number;
+  length: number;
+}
+
 export class TelegramError extends Error {
   readonly method: string;
   readonly code: number;
@@ -91,14 +100,21 @@ export class TelegramError extends Error {
   }
 }
 
-async function call<T>(env: Env, method: string, payload: Record<string, unknown>): Promise<T> {
+async function call<T>(
+  env: Env,
+  method: string,
+  payload: Record<string, unknown> | FormData,
+  timeoutMs = 10_000,
+): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10_000),
+      // مع FormData يضبط fetch ترويسة multipart وحدودها تلقائياً
+      ...(payload instanceof FormData
+        ? { body: payload }
+        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     // لا نمرّر رسالة الخطأ الأصلية تحسباً لاحتوائها على الرابط
@@ -126,13 +142,33 @@ export function sendMessage(
   chatId: number | string,
   text: string,
   keyboard?: InlineKeyboard,
+  entities?: MessageEntity[],
 ): Promise<TgMessage> {
+  // القص يفسد مواضع التنسيق، فالنص المنسّق يجب أن يأتي ضمن الحد أصلاً
+  if (entities?.length && text.length > MAX_MESSAGE_LENGTH) throw new Error('formatted message exceeds the Telegram limit');
   return call<TgMessage>(env, 'sendMessage', {
     chat_id: chatId,
     text: clip(text),
     link_preview_options: { is_disabled: true },
+    ...(entities?.length ? { entities } : {}),
     ...(keyboard ? { reply_markup: keyboard } : {}),
   });
+}
+
+/** إرسال ملف للمحادثة (multipart). */
+export async function sendDocument(
+  env: Env,
+  chatId: number | string,
+  filename: string,
+  content: string,
+  contentType: string,
+  caption?: string,
+): Promise<void> {
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('document', new File([content], filename, { type: contentType }));
+  if (caption) form.append('caption', caption.slice(0, 1024)); // حد تيليجرام للتعليق
+  await call(env, 'sendDocument', form, 20_000);
 }
 
 export async function editMessageText(

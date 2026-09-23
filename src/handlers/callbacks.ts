@@ -13,11 +13,30 @@ import {
 } from '../db.ts';
 import { formulateIdea, regenerateDraft, resendPreview, reviseDraft, reviseNotesKey } from '../drafting.ts';
 import { PLATFORM_LABEL, type Platform } from '../env.ts';
-import { listIdeas, reclassifyIdea } from '../ideas.ts';
+import { archiveIdea, listIdeas, reclassifyIdea, unarchiveIdea } from '../ideas.ts';
+import {
+  checkStatus,
+  confirmCancel,
+  confirmReschedule,
+  confirmRetry,
+  requestCancel,
+  requestReschedule,
+  requestRetry,
+  scheduledRefusal,
+  showRescheduleOptions,
+} from '../managing.ts';
 import { pickSuggestion, runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
 import { retryLastVoice } from '../voice.ts';
-import { CB, draftKeyboard, isEditable, scheduleKeyboard, statusLine } from '../preview.ts';
+import {
+  CB,
+  draftKeyboard,
+  isEditable,
+  previewKeyboard,
+  scheduleKeyboard,
+  snapCopyMessages,
+  statusLine,
+} from '../preview.ts';
 import { confirmPublish, requestConfirmation } from '../publishing.ts';
 import {
   answerCallback,
@@ -32,6 +51,16 @@ import {
 import { scheduleOptions } from '../time.ts';
 
 const toInt = (s: string | undefined): number | null => (s && /^\d{1,12}$/.test(s) ? Number(s) : null);
+// بصمة التأكيد (fingerprint أو postFingerprint في publishing.ts)
+const toFp = (s: string | undefined): string | null => (s && /^[0-9a-z]{1,8}$/.test(s) ? s : null);
+
+/** نص «إلغاء» في رسالة تأكيد بحسب حالة المسودة. */
+function cancelledText(d: Draft | null): string {
+  if (d && isEditable(d)) return 'أُلغي. المسودة ما زالت معلّقة.';
+  if (d?.status === 'scheduled') return 'أُلغي. بقي الموعد كما هو.';
+  if (d?.status === 'partial') return 'أُلغي. لم تُعد المحاولة.';
+  return 'أُلغي.';
+}
 
 const cancelKeyboard = { inline_keyboard: [[button('إلغاء', CB.cancelAwaiting())]] };
 
@@ -48,15 +77,45 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
     await answerCallback(env, cq.id, text, alert);
   };
 
+  const load = async (id: number | null): Promise<Draft | null> => {
+    const d = id === null ? null : await getDraft(db, id);
+    if (!d) await answer('لم أجد هذه المسودة.', true);
+    return d;
+  };
+  const refuse = (d: Draft) =>
+    answer(statusLine(d) ?? 'لا يمكن تنفيذ هذا الإجراء على المسودة في حالتها الحالية.', true);
+
   /** يحمّل مسودة قابلة للتعديل، أو يرد بسبب الرفض في تنبيه. */
   const editable = async (id: number | null): Promise<Draft | null> => {
-    const d = id === null ? null : await getDraft(db, id);
-    if (!d) {
-      await answer('لم أجد هذه المسودة.', true);
+    const d = await load(id);
+    if (d && !isEditable(d)) {
+      await refuse(d);
       return null;
     }
-    if (!isEditable(d)) {
-      await answer(statusLine(d) ?? 'لا يمكن تنفيذ هذا الإجراء على المسودة في حالتها الحالية.', true);
+    return d;
+  };
+
+  /** مسودة مجدولة يمكن تغيير موعدها أو إلغاؤها الآن (قبل الموعد بأكثر من 15 دقيقة). */
+  const changeable = async (id: number | null): Promise<Draft | null> => {
+    const d = await load(id);
+    if (!d) return null;
+    if (d.status !== 'scheduled') {
+      await refuse(d);
+      return null;
+    }
+    const refusal = scheduledRefusal(d);
+    if (refusal) {
+      await answer(refusal, true);
+      return null;
+    }
+    return d;
+  };
+
+  /** مسودة في حالة بعينها ولها منشور في SocialAPI. */
+  const withPost = async (id: number | null, status: Draft['status']): Promise<Draft | null> => {
+    const d = await load(id);
+    if (d && (d.status !== status || !d.socialapi_post_id)) {
+      await refuse(d);
       return null;
     }
     return d;
@@ -77,6 +136,14 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         if (ideaId === null || messageId === null) break;
         await answer();
         await reclassifyIdea(ctx, ideaId, messageId);
+        break;
+      }
+      case 'arc':
+      case 'una': {
+        const ideaId = toInt(a);
+        if (ideaId === null) break;
+        const r = action === 'arc' ? await archiveIdea(ctx, ideaId, cq.message) : await unarchiveIdea(ctx, ideaId, cq.message);
+        await answer(r.text, r.alert);
         break;
       }
 
@@ -105,16 +172,17 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         break;
       }
       case 'bk': {
-        const d = await editable(toInt(a));
+        // رجوع من خيارات الموعد إلى أزرار المسودة في حالتها الحالية
+        const d = await load(toInt(a));
         if (!d || messageId === null) break;
         await answer();
-        await editKeyboard(env, ctx.chatId, messageId, draftKeyboard(d));
+        await editKeyboard(env, ctx.chatId, messageId, previewKeyboard(d));
         break;
       }
       case 'okn':
       case 'oks': {
         const draftId = toInt(a);
-        const fp = b && /^[0-9a-z]{1,8}$/.test(b) ? b : null;
+        const fp = toFp(b);
         const unix = action === 'oks' ? toInt(c) : null;
         if (draftId === null || fp === null || messageId === null || (action === 'oks' && unix === null)) break;
         await answer();
@@ -129,7 +197,84 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
       }
       case 'no': {
         await answer('أُلغي');
-        if (messageId !== null) await editMessageText(env, ctx.chatId, messageId, 'أُلغي. المسودة ما زالت معلّقة.');
+        const id = toInt(a);
+        const d = id === null ? null : await getDraft(db, id);
+        if (messageId !== null) await editMessageText(env, ctx.chatId, messageId, cancelledText(d));
+        break;
+      }
+
+      // ----- إدارة المنشور بعد إنشائه (managing.ts) -----
+      case 'rsc': {
+        const d = await changeable(toInt(a));
+        if (!d || messageId === null) break;
+        await answer();
+        await showRescheduleOptions(ctx, d, messageId);
+        break;
+      }
+      case 'rsa': {
+        const d = await changeable(toInt(a));
+        const unix = toInt(b);
+        if (!d || unix === null) break;
+        await answer();
+        if (messageId !== null) await editKeyboard(env, ctx.chatId, messageId, previewKeyboard(d));
+        await requestReschedule(ctx, d, new Date(unix * 1000));
+        break;
+      }
+      case 'rso': {
+        const draftId = toInt(a);
+        const pfp = toFp(b);
+        const unix = toInt(c);
+        if (draftId === null || pfp === null || unix === null || messageId === null) break;
+        await answer();
+        await confirmReschedule(ctx, draftId, pfp, new Date(unix * 1000), messageId);
+        break;
+      }
+      case 'csc': {
+        const d = await changeable(toInt(a));
+        if (!d) break;
+        await answer();
+        await requestCancel(ctx, d);
+        break;
+      }
+      case 'cso': {
+        const draftId = toInt(a);
+        const pfp = toFp(b);
+        if (draftId === null || pfp === null || messageId === null) break;
+        await answer();
+        await confirmCancel(ctx, draftId, pfp, messageId);
+        break;
+      }
+      case 'prt': {
+        const d = await withPost(toInt(a), 'partial');
+        if (!d) break;
+        await answer();
+        await requestRetry(ctx, d);
+        break;
+      }
+      case 'pro': {
+        const draftId = toInt(a);
+        const pfp = toFp(b);
+        if (draftId === null || pfp === null || messageId === null) break;
+        await answer();
+        await confirmRetry(ctx, draftId, pfp, messageId);
+        break;
+      }
+      case 'chk': {
+        const d = await withPost(toInt(a), 'publishing');
+        if (!d) break;
+        const note = await checkStatus(ctx, d, messageId);
+        await answer(note ?? undefined);
+        break;
+      }
+      case 'snp': {
+        const d = await load(toInt(a));
+        if (!d) break;
+        if (d.snap_script.length === 0) {
+          await answer('لا يوجد سكربت سناب لهذه المسودة.', true);
+          break;
+        }
+        await answer();
+        for (const m of snapCopyMessages(d)) await sendMessage(env, ctx.chatId, m.text, undefined, m.entities);
         break;
       }
 

@@ -3,15 +3,16 @@
 import { claudeErrorMessage, ClaudeError } from '../claude.ts';
 import { collectPerformance, loadSnapshot, saveSnapshot } from '../analytics.ts';
 import { CRON_BUDGET_MS, makeCtx, type Ctx } from '../context.ts';
-import { cleanupProcessedUpdates, countUpcomingScheduled, getState, STATE_KEYS } from '../db.ts';
+import { cleanupProcessedUpdates, countUpcomingScheduled, getState, listDraftsByStatus, STATE_KEYS } from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
 import { CB } from '../preview.ts';
 import { generatePlan } from '../planning.ts';
 import { followUpPosts } from '../publishing.ts';
 import { buildReport } from '../reporting.ts';
 import { SocialApiError, socialApiErrorMessage } from '../socialapi.ts';
+import { draftTitle } from '../status.ts';
 import { button, sendMessage, TelegramError } from '../telegram.ts';
-import { daysAr } from '../text.ts';
+import { daysAr, readyDraftsAr } from '../text.ts';
 import { daysBetween, parseUtc } from '../time.ts';
 
 // توقيت Cron بـ UTC؛ الرياض = UTC+3 (SPEC §9)
@@ -30,7 +31,12 @@ export function errorSummary(err: unknown): string {
   return 'خطأ غير معروف';
 }
 
-/** (ب) تذكير عند انقطاع النشر: لا تذكير إن كانت التذكيرات موقوفة أو يوجد منشور مجدول قادم. */
+const REMINDER_SHOWN_DRAFTS = 3;
+
+/**
+ * (ب) تذكير عند انقطاع النشر: لا تذكير إن كانت التذكيرات موقوفة أو يوجد منشور مجدول قادم.
+ * يبدأ بالمسودات المعلّقة الجاهزة (أسرع طريق للنشر) قبل اقتراح موضوع جديد.
+ */
 export async function maybeRemind(ctx: Ctx): Promise<boolean> {
   const db = ctx.env.DB;
   const paused = await getState(db, STATE_KEYS.remindersPaused);
@@ -41,12 +47,22 @@ export async function maybeRemind(ctx: Ctx): Promise<boolean> {
   const days = last ? daysBetween(parseUtc(last), new Date()) : null;
   if (days !== null && days < reminderAfterDays(ctx.env)) return false;
 
-  const text =
-    days === null
-      ? '⏰ لم يُنشر شيء عبر البوت بعد. ما رأيك نجهّز أول منشور اليوم؟'
-      : `⏰ مرّ ${daysAr(days)} على آخر نشر. ما رأيك نجهّز منشوراً اليوم؟`;
+  const since = days === null ? '⏰ لم يُنشر شيء عبر البوت بعد.' : `⏰ مرّ ${daysAr(days)} على آخر نشر.`;
+  const planRow = [button('اقترح موضوعاً', CB.plan()), button('أفكاري', CB.ideas())];
+  const ready = await listDraftsByStatus(db, ['pending'], 50, true);
+  if (ready.length === 0) {
+    const text = days === null ? `${since} ما رأيك نجهّز أول منشور اليوم؟` : `${since} ما رأيك نجهّز منشوراً اليوم؟`;
+    await sendMessage(ctx.env, ctx.chatId, text, { inline_keyboard: [planRow] });
+    return true;
+  }
+  const shown = ready.slice(0, REMINDER_SHOWN_DRAFTS);
+  const text = [
+    `${since} لديك ${readyDraftsAr(ready.length)} للنشر${ready.length > shown.length ? '، أحدثها' : ''}:`,
+    ...shown.map((d) => `• #${d.id} — ${draftTitle(d)}`),
+    'افتح إحداها وانشرها، أو اطلب موضوعاً جديداً.',
+  ].join('\n');
   await sendMessage(ctx.env, ctx.chatId, text, {
-    inline_keyboard: [[button('اقترح موضوعاً', CB.plan()), button('أفكاري', CB.ideas())]],
+    inline_keyboard: [shown.map((d) => button(`عرض #${d.id}`, CB.show(d.id))), planRow],
   });
   return true;
 }

@@ -14,7 +14,7 @@ import {
   type Draft,
 } from './db.ts';
 import { isDryRun, monthlyPostLimit, PLATFORM_LABEL, type Env, type Platform } from './env.ts';
-import { CB, confirmKeyboard, draftKeyboard, isEditable, versionLabel } from './preview.ts';
+import { CB, confirmKeyboard, isEditable, previewKeyboard, versionLabel } from './preview.ts';
 import {
   buildPostRequest,
   buildValidateRequest,
@@ -41,7 +41,7 @@ export type UserMode = { kind: 'now' } | { kind: 'schedule'; at: Date };
 
 const POLL_ATTEMPTS = 3; // SPEC §8.5: حتى 3 مرات بفاصل 5 ثوانٍ
 const POLL_INTERVAL_MS = 5_000;
-const MIN_SCHEDULE_LEAD_MS = 5 * 60_000;
+export const MIN_SCHEDULE_LEAD_MS = 5 * 60_000;
 const TERMINAL: ReadonlySet<string> = new Set(['published', 'partial', 'failed', 'cancelled']);
 
 // ---------- بصمة المحتوى القابل للنشر ----------
@@ -51,7 +51,19 @@ const TERMINAL: ReadonlySet<string> = new Set(['published', 'partial', 'failed',
  * فإن تغيّر شيء بعد عرض التأكيد يُرفض الزر القديم ولا يُنشر محتوى لم يره المالك.
  */
 export function fingerprint(d: Pick<Draft, 'revision' | 'platforms' | 'media_id'>): string {
-  const input = `${d.revision}|${[...d.platforms].sort().join(',')}|${d.media_id ?? ''}`;
+  return fnv(`${d.revision}|${[...d.platforms].sort().join(',')}|${d.media_id ?? ''}`);
+}
+
+/**
+ * بصمة حالة المنشور بعد إنشائه (الحالة والمعرّف والموعد) لأزرار تأكيد تغيير الموعد والإلغاء وإعادة المحاولة:
+ * إن تغيّر أيٌّ منها بعد عرض التأكيد يُرفض الزر القديم.
+ */
+export function postFingerprint(d: Pick<Draft, 'status' | 'socialapi_post_id' | 'scheduled_at'>): string {
+  return fnv(`${d.status}|${d.socialapi_post_id ?? ''}|${d.scheduled_at ?? ''}`);
+}
+
+/** FNV-1a (32 بت) بالأساس 36: قصيرة تتسع في callback_data. */
+function fnv(input: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i);
@@ -79,7 +91,7 @@ export function computeCredits(u: Usage, fallbackLimit: number): Credits {
   return { unlimited: false, remaining: Math.max(0, limit - used), used, limit, periodEnd: u.period_end };
 }
 
-async function fetchCredits(env: Env): Promise<Credits> {
+export async function fetchCredits(env: Env): Promise<Credits> {
   try {
     return computeCredits(await getUsage(env), monthlyPostLimit(env));
   } catch (err) {
@@ -88,7 +100,7 @@ async function fetchCredits(env: Env): Promise<Credits> {
   }
 }
 
-function creditText(c: Credits): string {
+export function creditText(c: Credits): string {
   if (c.unlimited) return 'رصيد الخطة غير محدود';
   if (c.remaining === null) return 'تعذّر جلب الرصيد المتبقي';
   return `المتبقي من رصيد الشهر: ${c.remaining}`;
@@ -322,7 +334,6 @@ function targetLines(post: Post): string[] {
 export async function applyOutcome(ctx: Ctx, draftId: number, post: Post, messageId?: number): Promise<void> {
   const db = ctx.env.DB;
   const lines: string[] = [];
-  let actionable = false;
 
   switch (post.status) {
     case 'published':
@@ -346,7 +357,6 @@ export async function applyOutcome(ctx: Ctx, draftId: number, post: Post, messag
           : `🚫 أُلغي منشور المسودة #${draftId} من لوحة SocialAPI`,
       );
       lines.push(...targetLines(post));
-      actionable = true;
       break;
     }
     case 'scheduled': {
@@ -362,33 +372,44 @@ export async function applyOutcome(ctx: Ctx, draftId: number, post: Post, messag
     }
     case 'publishing': {
       await updateDraft(db, draftId, { status: 'publishing', socialapi_post_id: post.id });
-      lines.push(`⏳ ما زال نشر المسودة #${draftId} جارياً. ستتابعه المهمة اليومية وتبلغك بالنتيجة.`);
+      lines.push(
+        `⏳ ما زال نشر المسودة #${draftId} جارياً. اضغط «تحقق من الحالة» بعد قليل، أو ستبلغك المتابعة اليومية بالنتيجة.`,
+      );
       break;
     }
     case 'draft': {
       await updateDraft(db, draftId, { status: 'pending', socialapi_post_id: post.id });
       lines.push(`ℹ️ حُفظ منشور المسودة #${draftId} مسودةً في SocialAPI ولم يُنشر.`);
-      actionable = true;
       break;
     }
   }
 
   const text = lines.join('\n') || `حالة منشور المسودة #${draftId}: ${post.status}`;
-  let keyboard: InlineKeyboard | undefined;
-  const draft = actionable ? await getDraft(db, draftId) : null;
-  if (draft && isEditable(draft)) keyboard = draftKeyboard(draft);
+  const draft = await getDraft(db, draftId);
+  const kb = draft ? previewKeyboard(draft) : null;
+  const keyboard = kb?.inline_keyboard.length ? kb : undefined;
 
   let shownId = messageId;
   if (messageId) await editMessageText(ctx.env, ctx.chatId, messageId, text, keyboard);
   else shownId = (await sendMessage(ctx.env, ctx.chatId, text, keyboard)).message_id;
 
-  // عند فشل النشر تنتقل الأزرار إلى رسالة النتيجة ليتمكن المالك من المحاولة مجدداً
-  if (draft && keyboard && shownId) {
-    if (draft.telegram_message_id && draft.telegram_message_id !== shownId) {
-      await clearKeyboard(ctx.env, ctx.chatId, draft.telegram_message_id);
-    }
-    await updateDraft(db, draftId, { telegram_message_id: shownId });
+  // أزرار الحالة الجديدة تنتقل إلى رسالة النتيجة: إعادة النشر بعد الفشل، وتغيير الموعد أو الإلغاء بعد الجدولة،
+  // وإعادة محاولة ما فشل بعد النشر الجزئي، وسكربت سناب بعد النشر
+  if (draft && keyboard && shownId) await moveButtons(ctx, draft, shownId);
+}
+
+/** تصبح messageId رسالة أزرار المسودة الحيّة، وتُزال الأزرار من سابقتها. */
+export async function moveButtons(ctx: Ctx, draft: Draft, messageId: number): Promise<void> {
+  if (draft.telegram_message_id && draft.telegram_message_id !== messageId) {
+    await clearKeyboard(ctx.env, ctx.chatId, draft.telegram_message_id);
   }
+  await updateDraft(ctx.env.DB, draft.id, { telegram_message_id: messageId });
+}
+
+/** منشور المسودة لم يعد موجوداً في SocialAPI (حُذف من اللوحة مثلاً): تصبح «فشل النشر» لتبقى قابلة لإعادة النشر. */
+export async function markPostMissing(ctx: Ctx, draftId: number): Promise<void> {
+  await updateDraft(ctx.env.DB, draftId, { status: 'failed' });
+  await sendMessage(ctx.env, ctx.chatId, `⚠️ لم يعد منشور المسودة #${draftId} موجوداً في SocialAPI (ربما حُذف من اللوحة).`);
 }
 
 // ---------- المتابعة اليومية (SPEC §9 أ) ----------
@@ -411,8 +432,7 @@ export async function followUpPosts(ctx: Ctx): Promise<{ changed: number; errors
       changed++;
     } catch (err) {
       if (err instanceof SocialApiError && err.status === 404) {
-        await updateDraft(ctx.env.DB, d.id, { status: 'failed' });
-        await sendMessage(ctx.env, ctx.chatId, `⚠️ لم يعد منشور المسودة #${d.id} موجوداً في SocialAPI (ربما حُذف من اللوحة).`);
+        await markPostMissing(ctx, d.id);
         changed++;
         continue;
       }

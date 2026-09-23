@@ -97,6 +97,9 @@ export async function startBot({ vars = {} } = {}) {
     validate: { valid: true, errors: [], warnings: [] },
     createPost: null, // (body) => {status, json}
     getPost: null, // (id) => {status, json}
+    patchPost: null, // (id, body) => {status, json}
+    deletePost: null, // (id) => {status, json}؛ الافتراضي يحذف فيصير GET للمعرّف 404
+    retryPost: null, // (id) => {status, json}
     metrics: null, // (id) => {status, json}
     upload: { status: 201, json: { media_id: 'med_1' } },
     // (inputs) => رد النموذج، أو { __error: 'رسالة' } لرمي خطأ
@@ -109,6 +112,7 @@ export async function startBot({ vars = {} } = {}) {
   let waiting = [];
   let messageId = 1000;
   let postSeq = 0;
+  const deleted = new Set();
 
   const json = (status, data) =>
     new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -119,9 +123,17 @@ export async function startBot({ vars = {} } = {}) {
     const ct = request.headers.get('content-type') ?? '';
     if (ct.includes('application/json')) call.body = await request.json();
     else if (ct.includes('multipart/form-data')) {
+      // الحقول النصية كما هي، والملفات بالاسم والنوع والحجم (ونصها إن كانت JSON أو نصاً)
       const form = await request.formData();
-      const file = form.get('file');
-      call.form = { file: file && { name: file.name, type: file.type, size: file.size } };
+      call.form = {};
+      for (const [key, value] of form.entries()) {
+        if (typeof value === 'string') {
+          call.form[key] = value;
+          continue;
+        }
+        call.form[key] = { name: value.name, type: value.type, size: value.size };
+        if (/json|text/.test(value.type)) call.form[key].text = await value.text();
+      }
     }
     call.headers = Object.fromEntries(request.headers);
     calls.push(call);
@@ -198,8 +210,32 @@ export async function startBot({ vars = {} } = {}) {
           },
         });
       }
+      const rm = /^\/v1\/posts\/([^/]+)\/retry$/.exec(p);
+      if (rm && request.method === 'POST') {
+        if (mocks.retryPost) {
+          const r = mocks.retryPost(rm[1]);
+          return json(r.status, r.json);
+        }
+        return json(200, { success: true });
+      }
       const m = /^\/v1\/posts\/([^/]+)$/.exec(p);
+      if (m && request.method === 'PATCH') {
+        if (mocks.patchPost) {
+          const r = mocks.patchPost(m[1], call.body);
+          return json(r.status, r.json);
+        }
+        return json(200, { id: m[1], status: 'scheduled', scheduled_at: call.body.scheduled_at, targets: [] });
+      }
+      if (m && request.method === 'DELETE') {
+        if (mocks.deletePost) {
+          const r = mocks.deletePost(m[1]);
+          return json(r.status, r.json);
+        }
+        deleted.add(m[1]);
+        return json(200, { deleted: true, success: true, results: [] });
+      }
       if (m && request.method === 'GET') {
+        if (deleted.has(m[1])) return json(404, { error: { code: 'post.not_found', message: 'Post not found' } });
         if (mocks.getPost) {
           const r = mocks.getPost(m[1]);
           return json(r.status, r.json);
@@ -321,12 +357,15 @@ export async function startBot({ vars = {} } = {}) {
         message: { message_id: ++messageId, date: 1, from: { id: from }, chat: { id: from, type: 'private' }, ...(caption ? { caption } : {}), ...media },
       });
     },
-    async press(data, { messageId: mid = 1, from = OWNER } = {}) {
+    async press(data, { messageId: mid = 1, from = OWNER, markup } = {}) {
+      const message = { message_id: mid, date: 1, chat: { id: from, type: 'private' }, ...(markup ? { reply_markup: markup } : {}) };
       return bot.post({
         update_id: ++updateId,
-        callback_query: { id: `cq${updateId}`, from: { id: from }, data, message: { message_id: mid, date: 1, chat: { id: from, type: 'private' } } },
+        callback_query: { id: `cq${updateId}`, from: { id: from }, data, message },
       });
     },
+    /** ردود answerCallbackQuery (نص التنبيه وهل هو نافذة). */
+    answers: () => calls.filter((c) => c.tg === 'answerCallbackQuery').map((c) => c.body),
     /** ينتظر حتى يتحقق الشرط على سجل الطلبات الخارجة. */
     async waitFor(pred, timeout = 15_000, label = 'condition') {
       const start = Date.now();
@@ -363,6 +402,20 @@ export async function startBot({ vars = {} } = {}) {
     texts: () => calls.filter((c) => c.tg === 'sendMessage' || c.tg === 'editMessageText').map((c) => c.body.text),
     async row(sql, ...params) {
       return db.prepare(sql).bind(...params).first();
+    },
+    /**
+     * ينتظر حتى يتحقق شرط على صف في D1. بعض الكتابات تلي آخر طلب خارجي (مثل نقل الأزرار الحيّة
+     * بعد تعديل الرسالة)، فرؤية الطلب في السجل لا تعني أن الكتابة تمت.
+     */
+    async waitForRow(sql, params, pred, label = 'row', timeout = 5000) {
+      const start = Date.now();
+      let row;
+      while (Date.now() - start < timeout) {
+        row = await db.prepare(sql).bind(...params).first();
+        if (row && pred(row)) return row;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error(`timed out waiting for ${label}; last row: ${JSON.stringify(row)}`);
     },
     async scheduled(cron = '0 6 * * *') {
       const worker = await mf.getWorker();

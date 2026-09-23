@@ -143,6 +143,14 @@ export function daysAr(n: number): string {
   return `${n} يوماً`;
 }
 
+/** «مسودة واحدة جاهزة»، «مسودتان جاهزتان»، «4 مسودات جاهزة»، «11 مسودة جاهزة». */
+export function readyDraftsAr(n: number): string {
+  if (n === 1) return 'مسودة واحدة جاهزة';
+  if (n === 2) return 'مسودتان جاهزتان';
+  if (n >= 3 && n <= 10) return `${n} مسودات جاهزة`;
+  return `${n} مسودة جاهزة`;
+}
+
 /** «منشور واحد»، «منشوران»، «4 منشورات»، «11 منشوراً». */
 export function postsAr(n: number): string {
   if (n === 1) return 'منشور واحد';

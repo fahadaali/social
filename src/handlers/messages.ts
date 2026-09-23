@@ -1,5 +1,6 @@
 // الرسائل النصية والأوامر والصور (SPEC §7).
 
+import { exportBackup } from '../backup.ts';
 import { PILLARS, VOICE_FILLED } from '../content.ts';
 import type { Ctx } from '../context.ts';
 import { clearAwaiting, getAwaiting } from '../db.ts';
@@ -14,12 +15,13 @@ import { sendMessage, type TgMessage } from '../telegram.ts';
 import { handleVoice } from '../voice.ts';
 
 const COMMANDS_HELP = `الأوامر:
-/ideas — آخر 10 أفكار جديدة، لكل فكرة زر «صُغها»
+/ideas — آخر 10 أفكار جديدة، لكل فكرة زرّا «صُغها» و«أرشف»
 /plan — اقتراح 3 موضوعات للنشر
-/queue — المسودات المعلّقة والمجدولة
+/queue — المسودات المعلّقة والمجدولة، لكل منها زر «عرض»
 /stats — تقرير الأداء الآن
 /usage — رصيد المنشورات المتبقي هذا الشهر في SocialAPI
 /pause و /resume — إيقاف تذكيرات الانقطاع واستئنافها
+/export — نسخة احتياطية من أفكارك ومسوداتك (ملف JSON)
 /help — المساعدة
 
 تلقائياً: متابعة يومية 9 ص، وخطة أسبوعية الأحد 8 ص، وتقرير أداء الخميس 5 م (بتوقيت الرياض).`;
@@ -56,8 +58,10 @@ function help(env: Env): string {
     [
       '1) أرسل فكرتك نصاً أو رسالة صوتية ← أحفظها (بعد تفريغ الصوت) وأصنّف محورها.',
       '2) «صُغها الآن» ← مسودة فيها ثريد X ونص لينكدن وسكربت سناب.',
-      '3) أزرار المسودة: ✅ انشر الآن، 🕒 جدول، ✏️ عدّل (اكتب ملاحظاتك)، 🔁 صياغة جديدة، 🖼 أرفق صورة، X/LinkedIn لتفعيل المنصات، 🗑 تجاهل.',
+      '3) أزرار المسودة: ✅ انشر الآن، 🕒 جدول، ✏️ عدّل (اكتب ملاحظاتك)، 🔁 صياغة جديدة، 🖼 أرفق صورة، 📋 سكربت سناب (للنسخ)، X/LinkedIn لتفعيل المنصات، 🗑 تجاهل.',
       '4) قبل أي نشر أو جدولة يظهر تأكيد أخير مع رصيدك المتبقي.',
+      '5) المجدولة: من /queue اضغط «عرض» ثم «غيّر الموعد» أو «ألغِ الجدولة» (حتى 15 دقيقة قبل الموعد).',
+      '6) إن نُشرت على منصة وفشلت الأخرى: «أعد محاولة ما فشل» (تستهلك رصيداً واحداً).',
     ].join('\n'),
     COMMANDS_HELP,
     configWarnings(env).join('\n'),
@@ -95,6 +99,9 @@ async function handleCommand(ctx: Ctx, text: string): Promise<void> {
       return;
     case '/resume':
       await setRemindersPaused(ctx, false);
+      return;
+    case '/export':
+      await exportBackup(ctx);
       return;
     default:
       await sendMessage(ctx.env, ctx.chatId, 'أمر غير معروف. أرسل /help لعرض الأوامر.');

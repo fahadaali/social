@@ -208,6 +208,29 @@ export async function getPost(env: Env, postId: string): Promise<Post> {
 }
 
 /**
+ * PATCH /posts/{pid} — تغيير موعد منشور مجدول. يقبله SocialAPI للحالات draft وscheduled وfailed فقط،
+ * ويرد 409 إن بدأ النشر، فلا يمكن أن يؤثر في منشور نُشر.
+ */
+export async function reschedulePost(env: Env, postId: string, scheduledAt: string): Promise<Post> {
+  const data = await json<unknown>(env, 'PATCH', `/posts/${encodeURIComponent(postId)}`, { scheduled_at: scheduledAt });
+  if (!isPost(data)) throw new SocialApiError(200, 'invalid_response', 'unexpected post shape');
+  return data;
+}
+
+/**
+ * DELETE /posts/{pid} — تحذير: يلغي المجدول، لكنه يحذف المنشور المنشور فعلاً من المنصات.
+ * لا يُستدعى إلا من إلغاء الجدولة بعد التحقق من أن المنشور ما زال مجدولاً (managing.ts).
+ */
+export async function deletePost(env: Env, postId: string): Promise<void> {
+  await json<unknown>(env, 'DELETE', `/posts/${encodeURIComponent(postId)}`);
+}
+
+/** POST /posts/{pid}/retry — يعيد محاولة التوصيلات الفاشلة لمنشور partial أو failed، ويستهلك رصيداً واحداً. */
+export async function retryPost(env: Env, postId: string): Promise<void> {
+  await json<unknown>(env, 'POST', `/posts/${encodeURIComponent(postId)}/retry`);
+}
+
+/**
  * GET /posts/{pid}/metrics — مقاييس التفاعل لكل منصة (SPEC §8 المقاييس).
  * يحدّث الأرقام من المنصات لحظة الطلب؛ على X (BYOK) قد تُحتسب القراءة ضمن استهلاك تطبيقك.
  */
@@ -358,6 +381,9 @@ export function socialApiErrorMessage(err: unknown): string {
   }
   if (status === 401 || code.startsWith('auth.')) return 'مفتاح SocialAPI غير صالح أو منتهٍ. حدّثه عبر wrangler secret put SOCIALAPI_KEY.';
   if (code === 'account.not_found') return 'معرّف الحساب غير موجود في SocialAPI. راجع SOCIALAPI_X_ACCOUNT_ID وSOCIALAPI_LINKEDIN_ACCOUNT_ID.';
+  if (code === 'post.not_found') return 'المنشور غير موجود في SocialAPI (ربما حُذف من اللوحة).';
+  if (code === 'post.state_invalid') return 'حالة المنشور في SocialAPI لا تسمح بهذا الإجراء الآن.';
+  if (code === 'post.no_retryable_deliveries') return 'لا يوجد في المنشور جزء فاشل لإعادة محاولته.';
   if (code === 'billing.past_due') return 'حساب SocialAPI موقوف لتعثّر الدفع.';
   if (code === 'billing.storage_quota') return 'امتلأت مساحة الوسائط في SocialAPI.';
   if (code.startsWith('validation.') && err.apiMessage) return `رفضت SocialAPI الطلب: ${err.apiMessage}`;

@@ -4,6 +4,7 @@ import {
   checkDraftLimits,
   countWords,
   parseDraftContent,
+  readyDraftsAr,
   ShapeError,
   X_MAX_WEIGHTED,
   xTooLong,
@@ -85,4 +86,12 @@ test('parseDraftContent rejects wrong shapes', () => {
   assert.throws(() => parseDraftContent({ ...valid, x_segments: 'نص' }), ShapeError);
   assert.throws(() => parseDraftContent({ ...valid, x_segments: [] }), ShapeError);
   assert.throws(() => parseDraftContent({ ...valid, needs_visual: 'yes' }), ShapeError);
+});
+
+test('readyDraftsAr agrees in number', () => {
+  assert.equal(readyDraftsAr(1), 'مسودة واحدة جاهزة');
+  assert.equal(readyDraftsAr(2), 'مسودتان جاهزتان');
+  assert.equal(readyDraftsAr(3), '3 مسودات جاهزة');
+  assert.equal(readyDraftsAr(10), '10 مسودات جاهزة');
+  assert.equal(readyDraftsAr(11), '11 مسودة جاهزة');
 });

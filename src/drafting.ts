@@ -17,7 +17,7 @@ import {
   type Idea,
 } from './db.ts';
 import { accountId, draftModel, PLATFORMS, type Env, type Platform } from './env.ts';
-import { CB, draftKeyboard, isEditable, renderPreview, retryKeyboard } from './preview.ts';
+import { CB, isEditable, previewKeyboard, renderPreview, retryKeyboard } from './preview.ts';
 import { DRAFT_MAX_TOKENS, DRAFT_SCHEMA, draftUser, fixViolationsTurn, regenerateUser, type IdeaInput, type RecentPost } from './prompts/draft.ts';
 import { reviseUser } from './prompts/revise.ts';
 import { writerSystemPrompt } from './prompts/shared.ts';
@@ -89,7 +89,8 @@ function ideaInput(idea: Idea | null, draft?: Draft): IdeaInput {
  */
 export async function showPreview(ctx: Ctx, draft: Draft, idea: Idea | null, placeholderId?: number): Promise<void> {
   const chunks = renderPreview(draft, idea);
-  const keyboard = draftKeyboard(draft);
+  const kb = previewKeyboard(draft);
+  const keyboard = kb.inline_keyboard.length ? kb : undefined;
   let lastId = placeholderId ?? 0;
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
@@ -118,7 +119,7 @@ async function failPlaceholder(ctx: Ctx, placeholderId: number, err: unknown, re
   );
 }
 
-/** «عرض» من /queue: يعيد إرسال معاينة المسودة بأزرارها الحالية. */
+/** «عرض» من /queue أو التذكير: يعيد إرسال معاينة المسودة بأزرار حالتها الحالية. */
 export async function resendPreview(ctx: Ctx, draftId: number): Promise<void> {
   const draft = await getDraft(ctx.env.DB, draftId);
   if (!draft) {

@@ -12,9 +12,13 @@ import { formatRiyadh, parseUtc } from './time.ts';
 
 const QUEUE_LIMIT = 10;
 
-const title = (d: Draft) => `«${truncate(d.x_segments[0] ?? d.linkedin_text, 70)}»`;
+/** عنوان مختصر للمسودة: بداية التغريدة الأولى (أو نص لينكدن). */
+export const draftTitle = (d: Draft) => `«${truncate(d.x_segments[0] ?? d.linkedin_text, 70)}»`;
 
-/** /queue: المسودات المعلّقة والمجدولة، مع زر «عرض» لكل مسودة معلّقة لاستعادة أزرارها. */
+/**
+ * /queue: المسودات المجدولة والمعلّقة وقيد النشر، مع زر «عرض» لكل منها يعيد معاينتها بأزرار حالتها:
+ * المعلّقة للنشر والتعديل، والمجدولة لتغيير الموعد أو الإلغاء، وقيد النشر للتحقق من الحالة.
+ */
 export async function showQueue(ctx: Ctx): Promise<void> {
   const db = ctx.env.DB;
   const scheduled = (await listDraftsByStatus(db, ['scheduled'], 50)).sort((a, b) =>
@@ -32,19 +36,20 @@ export async function showQueue(ctx: Ctx): Promise<void> {
   if (scheduled.length) {
     const lines = scheduled.slice(0, QUEUE_LIMIT).map((d) => {
       const when = d.scheduled_at ? formatRiyadh(parseUtc(d.scheduled_at)) : 'موعد غير معروف';
-      return `• #${d.id} — ${when} — ${title(d)}`;
+      return `• #${d.id} — ${when} — ${draftTitle(d)}`;
     });
     sections.push(`🕒 المجدولة (${scheduled.length}):\n${lines.join('\n')}`);
   }
   if (pending.length) {
-    const lines = pending.map((d) => `• #${d.id} (${versionLabel(d)})${d.status === 'failed' ? ' ⚠️ فشل نشرها' : ''} — ${title(d)}`);
+    const lines = pending.map((d) => `• #${d.id} (${versionLabel(d)})${d.status === 'failed' ? ' ⚠️ فشل نشرها' : ''} — ${draftTitle(d)}`);
     sections.push(`📝 المعلّقة (الأحدث أولاً):\n${lines.join('\n')}`);
   }
   if (publishing.length) {
-    sections.push(`⏳ قيد النشر:\n${publishing.map((d) => `• #${d.id} — ${title(d)}`).join('\n')}`);
+    sections.push(`⏳ قيد النشر:\n${publishing.map((d) => `• #${d.id} — ${draftTitle(d)}`).join('\n')}`);
   }
 
-  const buttons = pending.map((d) => button(`عرض #${d.id}`, CB.show(d.id)));
+  const shown = [...scheduled.slice(0, QUEUE_LIMIT), ...pending, ...publishing];
+  const buttons = shown.map((d) => button(`عرض #${d.id}`, CB.show(d.id)));
   const keyboard: InlineKeyboard = { inline_keyboard: [] };
   for (let i = 0; i < buttons.length; i += 3) keyboard.inline_keyboard.push(buttons.slice(i, i + 3));
   await sendMessage(ctx.env, ctx.chatId, sections.join('\n\n'), keyboard.inline_keyboard.length ? keyboard : undefined);
