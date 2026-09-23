@@ -310,6 +310,7 @@ export class ConfigError extends Error {}
  * منشور واحد لكل مسودة (SPEC §8 منطق النشر 2) بهدفين:
  * - X: النص = التغريدة الأولى، وبقية الثريد في platform_data.thread لهدف X وحده
  *   (موثّق في صفحة موصل X). هذا يُبقي الثريد خارج هدف لينكدن فلا يلزم منشور ثانٍ — انظر NOTES.md.
+ *   كل عنصر كائن {text, media_ids} كما تشترط SocialAPI في رسالة التحقق، لا نص مجرد كما في التوثيق المنشور.
  * - LinkedIn: النص عبر تجاوز الهدف، والصورة (إن وجدت) على هدف لينكدن فقط لأن موصل X
  *   لا يدعم الوسائط حالياً ويتجاهلها — انظر NOTES.md.
  * بدون publish_now أو scheduled_at يُحفظ المنشور مسودة (لا تستهلك رصيداً)، وهذا وضع DRY_RUN.
@@ -328,7 +329,7 @@ export function buildPostRequest(env: Env, draft: PublishableDraft, mode: Publis
       targets.push({
         account_id: id,
         text: first ?? '',
-        ...(rest.length ? { platform_data: { thread: rest } } : {}),
+        ...(rest.length ? { platform_data: { thread: rest.map((t) => ({ text: t, media_ids: [] })) } } : {}),
       });
     } else {
       targets.push({

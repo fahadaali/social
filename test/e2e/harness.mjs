@@ -204,7 +204,25 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
         return json(200, mocks.usage);
       }
       if (p === '/v1/accounts' && request.method === 'GET') return json(mocks.accounts.status, mocks.accounts.json);
-      if (p === '/v1/posts/validate' && request.method === 'POST') return json(200, mocks.validate);
+      if (p === '/v1/posts/validate' && request.method === 'POST') {
+        // كما ردّت SocialAPI فعلاً (2026-09-23) على ثريد عناصره نصوص لا كائنات {text, media_ids}
+        const badThread = (call.body.targets ?? []).some((t) => {
+          const thread = t.platform_data?.thread;
+          return (
+            thread !== undefined &&
+            (!Array.isArray(thread) ||
+              thread.some((e) => !e || typeof e !== 'object' || typeof e.text !== 'string' || (e.media_ids !== undefined && !Array.isArray(e.media_ids))))
+          );
+        });
+        if (badThread) {
+          return json(200, {
+            valid: false,
+            errors: [{ platform: 'twitter', field: 'thread', message: 'thread must be an array of {text, media_ids} objects' }],
+            warnings: [],
+          });
+        }
+        return json(200, mocks.validate);
+      }
       if (p === '/v1/media/upload' && request.method === 'POST') return json(mocks.upload.status, mocks.upload.json);
       if (p === '/v1/posts' && request.method === 'POST') {
         if (mocks.createPost) {

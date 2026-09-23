@@ -1,7 +1,7 @@
 // أدوات فحص SocialAPI قبل التشغيل — لا تنشر شيئاً ولا تحذف شيئاً.
 //
 //   SOCIALAPI_KEY='sapi_key_...' node scripts/socialapi-check.mjs accounts
-//     يعرض الحسابات المربوطة ومعرّفاتها (acc_...) لنسخها إلى wrangler.toml.
+//     يعرض الحسابات المربوطة ومعرّفاتها (acc_...) لنسخها إلى متغيرات Cloudflare (أو أرسل /start للبوت).
 //
 //   SOCIALAPI_KEY='...' node scripts/socialapi-check.mjs thread-test <X_ACCOUNT_ID> <LINKEDIN_ACCOUNT_ID> [--draft]
 //     اختبار معيار القبول 4 (SPEC §8.3) عبر مسار التحقق المجاني POST /v1/posts/validate:
@@ -46,7 +46,7 @@ if (cmd === 'accounts') {
   const viaPlatformData = {
     text: 'تغريدة اختبار أولى',
     targets: [
-      { account_id: xId, text: 'تغريدة اختبار أولى', platform_data: { thread } },
+      { account_id: xId, text: 'تغريدة اختبار أولى', platform_data: { thread: thread.map((text) => ({ text, media_ids: [] })) } },
       { account_id: liId, text: 'نص اختبار للينكدن' },
     ],
     account_ids: [xId, liId],

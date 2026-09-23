@@ -210,7 +210,10 @@ test('acceptance 3: DRY_RUN publish → validate → confirm → SocialAPI draft
     assert.equal(create.body.scheduled_at, undefined);
     assert.equal(create.headers.authorization, 'Bearer sapi_key_test');
     assert.deepEqual(create.body.targets[0].platform_data, {
-      thread: ['ثلاث خطوات عملية لبدء الحوكمة في منظمتك.', 'ابدأ بمصفوفة صلاحيات واضحة.'],
+      thread: [
+        { text: 'ثلاث خطوات عملية لبدء الحوكمة في منظمتك.', media_ids: [] },
+        { text: 'ابدأ بمصفوفة صلاحيات واضحة.', media_ids: [] },
+      ],
     });
     assert.equal(create.body.targets[0].account_id, 'acc_x');
     assert.equal(create.body.targets[1].account_id, 'acc_li');

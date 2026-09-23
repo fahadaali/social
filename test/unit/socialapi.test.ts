@@ -22,7 +22,16 @@ const draft: PublishableDraft = {
 test('one post, two targets: thread in X platform_data only, LinkedIn text as target override', () => {
   const p = buildPostRequest(env, draft, { kind: 'draft' });
   assert.deepEqual(p.targets, [
-    { account_id: 'acc_x', text: 'الأولى', platform_data: { thread: ['الثانية', 'الثالثة'] } },
+    {
+      account_id: 'acc_x',
+      text: 'الأولى',
+      platform_data: {
+        thread: [
+          { text: 'الثانية', media_ids: [] },
+          { text: 'الثالثة', media_ids: [] },
+        ],
+      },
+    },
     { account_id: 'acc_li', text: 'نص لينكدن' },
   ]);
   assert.equal(p.text, 'الأولى');
