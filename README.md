@@ -60,7 +60,7 @@
 
 ### 2. SocialAPI.ai
 1. أنشئ حساباً وعلامة (Brand) واحدة، واربط حساب لينكدن الشخصي.
-2. أعدّ X عبر BYOK، واتبع [دليل SocialAPI](https://docs.social-api.ai/connectors/twitter-byok) حرفياً (صلاحيات Read and write، وOAuth 2.0، وعنوان الرجوع `https://api.social-api.ai/oauth/callback/twitter`).
+2. أعدّ X عبر BYOK، واتبع [دليل SocialAPI](https://docs.social-api.ai/connectors/twitter-byok) حرفياً: صلاحيات «Read and write and Direct message»، ونوع التطبيق «Web App, Automated App or Bot»، وعنوان الرجوع `https://api.social-api.ai/oauth/callback/twitter`، والنطاقات المذكورة في الدليل كلها. انسخ Client ID وClient Secret الخاصين بـ **OAuth 2.0** (لا مفاتيح OAuth 1.0 التي تظهر أول مرة) إلى SocialAPI: Settings ← Twitter integration.
 3. أنشئ مفتاح API **محدود الصلاحيات** من Settings → API Keys بالصلاحيات: `posts:read`، `posts:write`، `media:write`، و`accounts:read` (لقراءة معرّفات الحسابات فقط). مسار `/v1/usage` متاح لأي مفتاح.
 4. اعرض معرّفات الحسابات:
    ```sh
@@ -96,7 +96,12 @@ npx wrangler secret put SOCIALAPI_KEY
 
 ربط Workers AI (`[ai]` في `wrangler.toml`) لتفريغ الرسائل الصوتية لا يحتاج أي مفتاح أو إعداد إضافي.
 
-**النشر التلقائي من GitHub (Workers Builds):** من لوحة Cloudflare: Workers & Pages ← Create ← Import a repository، واختر هذا المستودع، وسمِّ الـ Worker باسم `social` (يطابق `name` في `wrangler.toml`). اضبط أمر النشر (Deploy command) على `npm run deploy` حتى تُطبَّق الترحيلات الجديدة تلقائياً. بعدها يُنشر كل دفع (push) إلى الفرع الرئيسي.
+**النشر التلقائي من GitHub (Workers Builds)، اختياري بعد النشر الأول من جهازك:**
+- من لوحة Cloudflare: Workers & Pages ← الـ Worker `social` ← Settings ← Builds ← Connect، واختر هذا المستودع. اسم الـ Worker يجب أن يطابق `name` في `wrangler.toml`.
+- **الفرع (Git branch):** افتراضه `main`، لكن المستودع فيه فرع واحد هو `claude/upbeat-fermat-s3mvu2`، فاختره أو أنشئ منه `main`.
+- **أمر النشر:** اتركه على الافتراضي `npx wrangler deploy`. رمز API الذي تنشئه Workers Builds تلقائياً لا يشمل صلاحية D1، فلا يستطيع تطبيق ترحيلات قاعدة البيانات.
+- **عند إضافة ترحيل جديد** إلى `migrations/`: طبّقه من جهازك بـ `npm run db:migrate:remote` قبل دفع الكود. أو أنشئ رمز API فيه صلاحية `D1:Edit`، واختره في إعدادات البناء، واجعل أمر النشر `npm run deploy`.
+- ارفع `wrangler.toml` بعد تعبئته، لأن النشر التلقائي يقرأ المعرّفات منه. هذه معرّفات وليست أسراراً؛ الأسرار تبقى في `wrangler secret put` فقط.
 
 ### 6. تفعيل الـ webhook
 ```sh
