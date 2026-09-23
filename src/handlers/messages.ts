@@ -1,5 +1,6 @@
 // الرسائل النصية والأوامر والصور (SPEC §7).
 
+import { accountSetupHint } from '../accounts.ts';
 import { exportBackup } from '../backup.ts';
 import { PILLARS, VOICE_FILLED } from '../content.ts';
 import type { Ctx } from '../context.ts';
@@ -81,12 +82,23 @@ async function syncCommandMenu(ctx: Ctx): Promise<void> {
   }
 }
 
+/** معرّفات حسابات SocialAPI للنسخ إن نقصت أو لم تطابق (accounts.ts)؛ فشلها لا يمس الترحيب. */
+async function sendAccountHint(ctx: Ctx): Promise<void> {
+  try {
+    const hint = await accountSetupHint(ctx.env);
+    if (hint) await sendMessage(ctx.env, ctx.chatId, hint.text, undefined, hint.entities);
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'account_hint_failed', code: err instanceof TelegramError ? err.code : 'unknown' }));
+  }
+}
+
 async function handleCommand(ctx: Ctx, text: string): Promise<void> {
   const command = (text.split(/\s+/)[0] ?? '').split('@')[0]?.toLowerCase();
   switch (command) {
     case '/start':
       await syncCommandMenu(ctx);
       await sendMessage(ctx.env, ctx.chatId, welcome(ctx.env), menuKeyboard(await remindersPaused(ctx.env.DB)));
+      await sendAccountHint(ctx);
       return;
     case '/help':
       await sendMessage(ctx.env, ctx.chatId, help(ctx.env), menuKeyboard(await remindersPaused(ctx.env.DB)));

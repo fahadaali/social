@@ -1,12 +1,14 @@
 // نقطة الدخول: fetch() لـ webhook تيليجرام، و scheduled() لمهام Cron (SPEC §2 و§4).
 
-import { ownerChat, secretMatches } from './auth.ts';
+import { ownerChat, secretMatches, webhookSecret } from './auth.ts';
 import { makeCtx, WEBHOOK_BUDGET_MS } from './context.ts';
 import { markUpdateProcessed } from './db.ts';
 import { ownerId, type Env } from './env.ts';
 import { handleCallback } from './handlers/callbacks.ts';
 import { errorSummary, runScheduled } from './handlers/cron.ts';
 import { handleMessage } from './handlers/messages.ts';
+import { ensureSchema } from './migrations.ts';
+import { handleSetup } from './setup.ts';
 import { sendMessage, type TgUpdate } from './telegram.ts';
 
 const WEBHOOK_PATH = '/webhook';
@@ -16,6 +18,11 @@ const ok = () => new Response('ok');
 async function processUpdate(env: Env, update: TgUpdate, chatId: number): Promise<void> {
   const ctx = makeCtx(env, chatId, WEBHOOK_BUDGET_MS);
   try {
+    if (!env.DB) {
+      await sendMessage(env, chatId, '⚠️ قاعدة البيانات غير مربوطة بالـ Worker بعد. افتح صفحة /setup في رابط الـ Worker لمعرفة المطلوب.');
+      return;
+    }
+    await ensureSchema(env.DB);
     // منع التكرار (SPEC §4.3)
     if (!(await markUpdateProcessed(env.DB, update.update_id))) return;
     if (update.message) await handleMessage(ctx, update.message);
@@ -41,10 +48,12 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/' && request.method === 'GET') return ok();
+    if (url.pathname === '/setup' && request.method === 'GET') return handleSetup(request, env);
     if (url.pathname !== WEBHOOK_PATH) return new Response('not found', { status: 404 });
     if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
 
-    if (!secretMatches(request.headers.get('X-Telegram-Bot-Api-Secret-Token'), env.TELEGRAM_WEBHOOK_SECRET)) {
+    const secret = await webhookSecret(env);
+    if (!secretMatches(request.headers.get('X-Telegram-Bot-Api-Secret-Token'), secret ?? undefined)) {
       return new Response('unauthorized', { status: 401 });
     }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ownerChat } from '../../src/auth.ts';
+import { createHmac } from 'node:crypto';
+import { ownerChat, webhookSecret } from '../../src/auth.ts';
 import { daysAr } from '../../src/text.ts';
 import type { TgUpdate } from '../../src/telegram.ts';
 
@@ -33,4 +34,14 @@ test('Arabic day counts', () => {
   assert.equal(daysAr(2), 'يومان');
   assert.equal(daysAr(4), '4 أيام');
   assert.equal(daysAr(11), '11 يوماً');
+});
+
+test('webhook secret: explicit value wins; otherwise derived from the bot token in Telegram\'s allowed charset', async () => {
+  assert.equal(await webhookSecret({ TELEGRAM_BOT_TOKEN: '1:abc', TELEGRAM_WEBHOOK_SECRET: ' mine ' }), 'mine');
+  const derived = await webhookSecret({ TELEGRAM_BOT_TOKEN: '1:abc' });
+  assert.equal(derived, createHmac('sha256', '1:abc').update('social-bot:telegram-webhook-secret').digest('base64url'));
+  assert.match(derived ?? '', /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(await webhookSecret({ TELEGRAM_BOT_TOKEN: '1:abc', TELEGRAM_WEBHOOK_SECRET: '' }), derived);
+  assert.notEqual(await webhookSecret({ TELEGRAM_BOT_TOKEN: '2:xyz' }), derived);
+  assert.equal(await webhookSecret({ TELEGRAM_BOT_TOKEN: '' }), null);
 });

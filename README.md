@@ -14,6 +14,7 @@
 | 3. التحليلات | منفّذة ومختبرة محلياً: `/stats`، وتقرير الخميس، واستخدام المقاييس في الخطة |
 | إضافات وظيفية | منفّذة ومختبرة محلياً: تغيير موعد المجدول وإلغاؤه، وإعادة محاولة المنشور الجزئي، والتذكير بالمسودات الجاهزة، وأرشفة الأفكار، ونسخ سكربت سناب، و`/export` (التفاصيل في `NOTES.md` القسم 8) |
 | الوصول السريع | منفّذ ومختبر محلياً: لوحة أزرار ثابتة أسفل المحادثة، وقائمة الأوامر في زر «القائمة» (`NOTES.md` القسم 9) |
+| الإعداد من المتصفح | منفّذ ومختبر محلياً: نشر من GitHub بلا طرفية، وجداول ينشئها الـ Worker بنفسه، وصفحة `/setup`، ومعرّفات الحسابات من `/start` (`NOTES.md` القسم 10) |
 
 كل المراحل تنتظر النشر والتجربة على حساباتك الحقيقية (أسبوع `DRY_RUN`).
 
@@ -50,9 +51,9 @@
 - الأحد 8:00 ص: خطة الأسبوع.
 - الخميس 5:00 م: تقرير الأداء.
 
-## الإعداد (مرة واحدة)
+## الإعداد (مرة واحدة، من المتصفح فقط)
 
-المتطلبات: Node.js 22.18 أو أحدث (تحتاجه الاختبارات لتشغيل TypeScript مباشرة)، وحساب Cloudflare مجاني.
+لا تحتاج طرفية ولا تثبيت أي شيء على جهازك: كل الخطوات من واجهات المواقع. والأسرار تُحفظ في Cloudflare وحده، ولا يُكتب في المستودع أي سر أو معرّف شخصي.
 
 ### 1. تيليجرام
 1. أنشئ البوت من `@BotFather` واحفظ التوكن.
@@ -61,65 +62,68 @@
 ### 2. SocialAPI.ai
 1. أنشئ حساباً وعلامة (Brand) واحدة، واربط حساب لينكدن الشخصي.
 2. أعدّ X عبر BYOK، واتبع [دليل SocialAPI](https://docs.social-api.ai/connectors/twitter-byok) حرفياً: صلاحيات «Read and write and Direct message»، ونوع التطبيق «Web App, Automated App or Bot»، وعنوان الرجوع `https://api.social-api.ai/oauth/callback/twitter`، والنطاقات المذكورة في الدليل كلها. انسخ Client ID وClient Secret الخاصين بـ **OAuth 2.0** (لا مفاتيح OAuth 1.0 التي تظهر أول مرة) إلى SocialAPI: Settings ← Twitter integration.
-3. أنشئ مفتاح API **محدود الصلاحيات** من Settings → API Keys بالصلاحيات: `posts:read`، `posts:write`، `media:write`، و`accounts:read` (لقراءة معرّفات الحسابات فقط). مسار `/v1/usage` متاح لأي مفتاح.
-4. اعرض معرّفات الحسابات:
-   ```sh
-   SOCIALAPI_KEY='sapi_key_...' node scripts/socialapi-check.mjs accounts
-   ```
+3. أنشئ مفتاح API **محدود الصلاحيات** من Settings → API Keys بالصلاحيات: `posts:read`، `posts:write`، `media:write`، و`accounts:read` (ليعرض لك البوت معرّفات حساباتك في الخطوة 7). مسار `/v1/usage` متاح لأي مفتاح.
+
+معرّفات الحسابات لا تحتاج نسخها الآن: البوت يعرضها لك لاحقاً.
 
 ### 3. Anthropic
 أنشئ مفتاح API من Console، وضع حداً شهرياً للإنفاق.
 
 ### 4. ملفاتك
-عبّئ `config/voice.md` بدليل أسلوبك و5 إلى 10 نماذج من كتاباتك، و`config/pillars.md` بمحاورك. اكتب كل محور عنواناً يبدأ بـ `##`.
+عبّئ `config/voice.md` بدليل أسلوبك و5 إلى 10 نماذج من كتاباتك، و`config/pillars.md` بمحاورك. اكتب كل محور عنواناً يبدأ بـ `##`. من GitHub مباشرة: افتح الملف ← أيقونة القلم ← عدّل ← Commit changes على الفرع `main`.
 
-### 5. Cloudflare
-```sh
-npm install
-npx wrangler login
-npx wrangler d1 create social          # انسخ database_id الناتج إلى wrangler.toml
-```
-في `wrangler.toml` عبّئ:
-- `database_id`
-- `ALLOWED_TELEGRAM_USER_ID`
-- `SOCIALAPI_X_ACCOUNT_ID`
-- `SOCIALAPI_LINKEDIN_ACCOUNT_ID`
+### 5. Cloudflare: Worker مربوط بـ GitHub
+1. من لوحة Cloudflare: **Workers & Pages** ← **Create application** ← **Import a repository** ← اختر حساب GitHub ثم المستودع `social`. إن طُلب منك، ثبّت تطبيق Cloudflare على GitHub وامنحه الوصول إلى هذا المستودع.
+2. في صفحة الإعداد:
+   - اسم المشروع: `social` (يجب أن يطابق `name` في `wrangler.toml`).
+   - أمر البناء (Build command): اتركه فارغاً.
+   - أمر النشر (Deploy command): الافتراضي `npx wrangler deploy`.
+   - ثم **Save and Deploy**.
+3. قاعدة البيانات: ينشئ النشر قاعدة D1 باسم `social-db` ويربطها باسم `DB` تلقائياً، والجداول ينشئها الـ Worker بنفسه. لا معرّف تنسخه ولا أمر تشغّله.
+   - **إن فشل البناء عند D1** (رسالة عن صلاحية D1 أو عن الربط `DB`): **Storage & Databases** ← **D1** ← **Create database** باسم `social-db`، ثم الـ Worker ← **Bindings** ← **Add binding** ← **D1 database**: الاسم `DB` والقاعدة `social-db`. بعدها **Deployments** ← **View build history** ← **Retry build**. النشرات التالية تحتفظ بهذا الربط.
+4. الأسرار والمتغيرات: الـ Worker ← **Settings** ← **Variables and Secrets** ← **Add**، ثم **Deploy**:
 
-ثم:
-```sh
-npm run deploy                          # يطبّق ترحيلات D1 ثم ينشر الـ Worker
-npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET   # مثلاً ناتج: openssl rand -hex 32
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put SOCIALAPI_KEY
-```
+   | الاسم | النوع | القيمة |
+   |---|---|---|
+   | `TELEGRAM_BOT_TOKEN` | Secret | توكن البوت |
+   | `ANTHROPIC_API_KEY` | Secret | مفتاح Anthropic |
+   | `SOCIALAPI_KEY` | Secret | مفتاح SocialAPI |
+   | `ALLOWED_TELEGRAM_USER_ID` | Text | معرّفك الرقمي |
 
-ربط Workers AI (`[ai]` في `wrangler.toml`) لتفريغ الرسائل الصوتية لا يحتاج أي مفتاح أو إعداد إضافي.
+   لا حاجة إلى `TELEGRAM_WEBHOOK_SECRET`: يُشتق من توكن البوت (`NOTES.md` القسم 10). وربط Workers AI للرسائل الصوتية لا يحتاج أي مفتاح.
 
-**النشر التلقائي من GitHub (Workers Builds)، اختياري بعد النشر الأول من جهازك:**
-- من لوحة Cloudflare: Workers & Pages ← الـ Worker `social` ← Settings ← Builds ← Connect، واختر هذا المستودع. اسم الـ Worker يجب أن يطابق `name` في `wrangler.toml`.
-- **الفرع (Git branch):** افتراضه `main`، لكن المستودع فيه فرع واحد هو `claude/upbeat-fermat-s3mvu2`، فاختره أو أنشئ منه `main`.
-- **أمر النشر:** اتركه على الافتراضي `npx wrangler deploy`. رمز API الذي تنشئه Workers Builds تلقائياً لا يشمل صلاحية D1، فلا يستطيع تطبيق ترحيلات قاعدة البيانات.
-- **عند إضافة ترحيل جديد** إلى `migrations/`: طبّقه من جهازك بـ `npm run db:migrate:remote` قبل دفع الكود. أو أنشئ رمز API فيه صلاحية `D1:Edit`، واختره في إعدادات البناء، واجعل أمر النشر `npm run deploy`.
-- ارفع `wrangler.toml` بعد تعبئته، لأن النشر التلقائي يقرأ المعرّفات منه. هذه معرّفات وليست أسراراً؛ الأسرار تبقى في `wrangler secret put` فقط.
+### 6. ربط تيليجرام
+افتح `https://social.<حسابك>.workers.dev/setup` (الرابط الأساسي تجده في صفحة الـ Worker). الصفحة:
+- تنشئ جداول قاعدة البيانات إن لم تكن موجودة.
+- تفحص الإعدادات، وتذكر ما ينقص **بالاسم فقط** دون عرض أي قيمة.
+- تربط تيليجرام بالـ Worker بسر مشتق من التوكن، فلا سر إضافياً تحفظه.
 
-### 6. تفعيل الـ webhook
-```sh
-TELEGRAM_BOT_TOKEN='...' TELEGRAM_WEBHOOK_SECRET='...' sh scripts/set-webhook.sh https://social.<حسابك>.workers.dev
-```
-أرسل `/start` للبوت لتظهر لوحة الأزرار وقائمة الأوامر. إن ظهرت تحذيرات عن الإعداد فستجدها في رسالة الترحيب. وبعد أي تحديث يغيّر الأزرار أرسل `/start` مرة أخرى.
+فتحها أكثر من مرة لا يضر. افتحها من جديد إذا غيّرت توكن البوت.
 
-### 7. التجربة
-- اختبار الثريد مع لينكدن (معيار القبول 4) مجاناً:
+### 7. معرّفات الحسابات
+1. أرسل `/start` للبوت. بعد الترحيب يعرض حسابيك المربوطين في SocialAPI ومعرّفاتهما؛ المس المعرّف لنسخه.
+2. أضفهما في Cloudflare بنوع Text: `SOCIALAPI_X_ACCOUNT_ID` و`SOCIALAPI_LINKEDIN_ACCOUNT_ID`، ثم **Deploy**.
+3. افتح `/setup` مرة أخرى: كل البنود ✅. ثم أرسل `/start` لتظهر لوحة الأزرار وقائمة الأوامر.
+
+### 8. التجربة
+- **وضع التجربة مفعّل ما دام `DRY_RUN` غير مضبوط.** فيه يُحفظ كل «نشر» مسودةً في SocialAPI، ولا يُنشر ولا يُستهلك رصيد. جرّب أسبوعاً.
+- **للنشر الفعلي:** أضف متغيراً بنوع Text اسمه `DRY_RUN` وقيمته `false`، ثم **Deploy**. صفحة `/setup` تُظهر الوضع الحالي.
+- تغيير الموعد والإلغاء وإعادة المحاولة لا تُجرَّب في وضع التجربة، لأنه لا يُنشئ منشورات مجدولة ولا منشورة. جرّبها بعد إيقافه على منشور مجدول لليوم التالي.
+- اختبار الثريد مع لينكدن (معيار القبول 4) مجاناً، وهو الخطوة الوحيدة التي تحتاج طرفية (اختياري):
   ```sh
   SOCIALAPI_KEY='...' node scripts/socialapi-check.mjs thread-test <X_ACCOUNT_ID> <LINKEDIN_ACCOUNT_ID> --draft
   ```
   وسجّل النتيجة في `NOTES.md`.
-- جرّب أسبوعاً على `DRY_RUN = "true"`. في هذا الوضع يُحفظ كل «نشر» مسودةً في SocialAPI، ولا يُنشر ولا يُستهلك رصيد.
-- بعدها غيّر القيمة إلى `"false"` في `wrangler.toml` وادفع التغيير.
-- تغيير الموعد والإلغاء وإعادة المحاولة لا تُجرَّب في وضع التجربة، لأنه لا يُنشئ منشورات مجدولة ولا منشورة. جرّب تغيير الموعد والإلغاء بعد إيقافه على منشور مجدول لليوم التالي.
+
+### التحديثات بعد ذلك
+- كل دفع إلى `main` يُبنى ويُنشر تلقائياً. المتغيرات التي أضفتها من اللوحة تبقى (`keep_vars`)، والنشر لا يمس الأسرار.
+- الجداول الجديدة (إن أُضيف ترحيل إلى `migrations/`) يطبّقها الـ Worker بنفسه عند أول طلب.
+- الفروع الأخرى تُبنى معاينات معزولة: بلا قاعدة بيانات ولا أسرار ولا روابط عامة، فلا تلمس البوت.
+- بعد أي تحديث يغيّر الأزرار أرسل `/start` مرة أخرى.
 
 ## التطوير
+
+المتطلبات: Node.js 22.18 أو أحدث (تحتاجه الاختبارات لتشغيل TypeScript مباشرة).
 
 ```sh
 npm run typecheck   # TypeScript
@@ -127,13 +131,18 @@ npm test            # اختبارات الوحدات (Node test runner)
 npm run test:e2e    # اختبارات طرفية: الـ Worker المجمّع داخل workerd مع D1 محلية وخوادم وهمية
 npm run check       # الكل
 ```
-لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار في ملف `.dev.vars`، وهو مستثنى من git. ربط Workers AI يعمل عن بُعد دائماً، فيحتاج `npx wrangler login`.
+لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار والمتغيرات في ملف `.dev.vars`، وهو مستثنى من git. الجداول تُنشأ محلياً تلقائياً أيضاً. ربط Workers AI يعمل عن بُعد دائماً، فيحتاج `npx wrangler login`.
+
+النشر من الطرفية بدل GitHub (اختياري): `npx wrangler login` ثم `npm run deploy`، والأسرار بـ `npx wrangler secret put <الاسم>`. أما `scripts/set-webhook.sh` فيحتاج `TELEGRAM_WEBHOOK_SECRET` مضبوطاً صراحةً بالقيمة نفسها في Cloudflare؛ صفحة `/setup` أسهل.
 
 ## البنية
 
 ```
-src/index.ts            fetch() للـ webhook + scheduled() للـ Cron
-src/auth.ts             التحقق من السر والمالك
+src/index.ts            fetch() للـ webhook و /setup + scheduled() للـ Cron
+src/auth.ts             التحقق من السر (الصريح أو المشتق من التوكن) والمالك
+src/setup.ts            صفحة /setup: فحص الإعداد وربط تيليجرام من المتصفح
+src/schema.ts · migrations.ts   تطبيق ترحيلات D1 من داخل الـ Worker (متوافق مع wrangler)
+src/accounts.ts         معرّفات حسابات SocialAPI للنسخ عند /start
 src/telegram.ts         Bot API (إرسال، تعديل، أزرار، تنزيل ملفات)
 src/claude.ts           Messages API بمخرجات JSON مقيّدة بمخطط
 src/socialapi.ts        المنشورات، التحقق، الوسائط، الاستهلاك

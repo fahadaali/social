@@ -88,12 +88,29 @@ export function anthropicMessage(obj, stop = 'end_turn') {
 
 // ---------- الخادم الوهمي ----------
 
-export async function startBot({ vars = {} } = {}) {
+/**
+ * vars: تتجاوز الروابط الافتراضية، والقيمة null تحذف الربط (كمتغير لم يُضبط في لوحة Cloudflare).
+ * migrate: true = الترحيلات مطبّقة ومسجّلة في d1_migrations كما يفعل wrangler، و false = قاعدة فارغة
+ * (ينشئ الـ Worker جداوله بنفسه)، أو قائمة بأسماء الترحيلات المطبّقة مسبقاً.
+ * withDb: false = بلا ربط D1 إطلاقاً (كـ Worker لم تُربط به قاعدة بعد).
+ */
+export async function startBot({ vars = {}, migrate = true, withDb = true } = {}) {
   const calls = [];
   const mocks = {
     // (body, kind, n) => {status, json} | object (يُلف كرسالة ناجحة)
     anthropic: [],
     usage: { posts_used: 4, posts_limit: 10, period_end: '2026-10-15T00:00:00Z' },
+    // GET /v1/accounts؛ الافتراضي يطابق SOCIALAPI_X_ACCOUNT_ID و SOCIALAPI_LINKEDIN_ACCOUNT_ID
+    accounts: {
+      status: 200,
+      json: {
+        count: 2,
+        data: [
+          { id: 'acc_x', platform: 'twitter', name: 'Owner', username: 'owner', status: 'active' },
+          { id: 'acc_li', platform: 'linkedin', name: 'Owner Name', username: 'Owner Name', status: 'active' },
+        ],
+      },
+    },
     validate: { valid: true, errors: [], warnings: [] },
     createPost: null, // (body) => {status, json}
     getPost: null, // (id) => {status, json}
@@ -106,7 +123,7 @@ export async function startBot({ vars = {} } = {}) {
     ai: null,
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
     answerBarrier: 0,
-    // (method, body) => true لإفشال طلب تيليجرام بعينه
+    // (method, body) => true لإفشال طلب تيليجرام بعينه (500)، أو {status, description} لخطأ محدد
     tgFail: null,
   };
   let waiting = [];
@@ -142,8 +159,10 @@ export async function startBot({ vars = {} } = {}) {
       if (url.pathname.startsWith('/file/')) return new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]));
       const method = url.pathname.split('/').pop();
       call.tg = method;
-      if (mocks.tgFail?.(method, call.body)) {
-        return json(500, { ok: false, error_code: 500, description: 'Internal Server Error' });
+      const fail = mocks.tgFail?.(method, call.body);
+      if (fail) {
+        const { status = 500, description = 'Internal Server Error' } = fail === true ? {} : fail;
+        return json(status, { ok: false, error_code: status, description });
       }
       if (method === 'sendMessage') {
         return json(200, { ok: true, result: { message_id: ++messageId, date: 1, chat: { id: call.body.chat_id, type: 'private' }, text: call.body.text } });
@@ -184,6 +203,7 @@ export async function startBot({ vars = {} } = {}) {
         if (mocks.usageError) return json(401, { error: { code: 'auth.invalid_key', message: 'bad key' } });
         return json(200, mocks.usage);
       }
+      if (p === '/v1/accounts' && request.method === 'GET') return json(mocks.accounts.status, mocks.accounts.json);
       if (p === '/v1/posts/validate' && request.method === 'POST') return json(200, mocks.validate);
       if (p === '/v1/media/upload' && request.method === 'POST') return json(mocks.upload.status, mocks.upload.json);
       if (p === '/v1/posts' && request.method === 'POST') {
@@ -254,7 +274,7 @@ export async function startBot({ vars = {} } = {}) {
     return new Response('unexpected outbound request in test', { status: 599 });
   }
 
-  const bindings = {
+  const defaults = {
     TELEGRAM_BOT_TOKEN: BOT_TOKEN,
     TELEGRAM_WEBHOOK_SECRET: SECRET,
     ANTHROPIC_API_KEY: 'sk-ant-test',
@@ -267,8 +287,8 @@ export async function startBot({ vars = {} } = {}) {
     REMINDER_AFTER_DAYS: '4',
     MONTHLY_POST_LIMIT: '10',
     DRY_RUN: 'true',
-    ...vars,
   };
+  const bindings = Object.fromEntries(Object.entries({ ...defaults, ...vars }).filter(([, v]) => v !== null));
 
   const workerLogs = [];
   const mf = new Miniflare(
@@ -282,12 +302,12 @@ export async function startBot({ vars = {} } = {}) {
           modules: [
             { type: 'ESModule', path: `${BUILD_DIR}/index.js` },
             ...readdirSync(BUILD_DIR)
-              .filter((f) => f.endsWith('.md') && f !== 'README.md')
+              .filter((f) => (f.endsWith('.md') && f !== 'README.md') || f.endsWith('.sql'))
               .map((f) => ({ type: 'Text', path: `${BUILD_DIR}/${f}` })),
           ],
           compatibilityDate: '2026-09-15',
           bindings,
-          d1Databases: { DB: 'e2e-db' },
+          d1Databases: withDb ? { DB: 'e2e-db' } : {},
           serviceBindings: { AI: 'ai-mock' },
           outboundService: outbound,
         },
@@ -303,14 +323,24 @@ export async function startBot({ vars = {} } = {}) {
   );
   await mf.ready;
 
-  const db = await mf.getD1Database('DB');
-  for (const file of readdirSync(new URL('migrations/', ROOT)).sort()) {
-    const sql = readFileSync(new URL(`migrations/${file}`, ROOT), 'utf8')
-      .split('\n')
-      .map((l) => l.replace(/--.*$/, ''))
-      .join('\n');
-    for (const stmt of sql.split(';').map((s) => s.trim()).filter(Boolean)) {
-      await db.prepare(stmt).run();
+  const db = withDb ? await mf.getD1Database('DB') : null;
+  if (db && migrate) {
+    // كما يفعل «wrangler d1 migrations apply»: يطبّق الملف ويسجّل اسمه في d1_migrations
+    await db
+      .prepare(
+        'CREATE TABLE IF NOT EXISTS d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)',
+      )
+      .run();
+    const files = readdirSync(new URL('migrations/', ROOT)).sort();
+    for (const file of Array.isArray(migrate) ? files.filter((f) => migrate.includes(f)) : files) {
+      const sql = readFileSync(new URL(`migrations/${file}`, ROOT), 'utf8')
+        .split('\n')
+        .map((l) => l.replace(/--.*$/, ''))
+        .join('\n');
+      for (const stmt of sql.split(';').map((s) => s.trim()).filter(Boolean)) {
+        await db.prepare(stmt).run();
+      }
+      await db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(file).run();
     }
   }
 
@@ -416,6 +446,11 @@ export async function startBot({ vars = {} } = {}) {
         await new Promise((r) => setTimeout(r, 25));
       }
       throw new Error(`timed out waiting for ${label}; last row: ${JSON.stringify(row)}`);
+    },
+    /** طلب إلى مسار في الـ Worker (مثل /setup)، ويعيد {status, headers, text}. */
+    async get(path, method = 'GET') {
+      const res = await mf.dispatchFetch(`https://bot.example${path}`, { method });
+      return { status: res.status, headers: Object.fromEntries(res.headers), text: await res.text() };
     },
     async scheduled(cron = '0 6 * * *') {
       const worker = await mf.getWorker();

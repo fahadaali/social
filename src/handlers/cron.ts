@@ -12,6 +12,7 @@ import {
   STATE_KEYS,
 } from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
+import { ensureSchema } from '../migrations.ts';
 import { CB } from '../preview.ts';
 import { generatePlan } from '../planning.ts';
 import { followUpPosts } from '../publishing.ts';
@@ -144,6 +145,7 @@ export async function runScheduled(env: Env, cron: string): Promise<void> {
   const ctx = makeCtx(env, Number(owner), CRON_BUDGET_MS);
   let failures: string[];
   try {
+    await ensureSchema(env.DB);
     failures = await task.run(ctx);
   } catch (err) {
     failures = [errorSummary(err)];

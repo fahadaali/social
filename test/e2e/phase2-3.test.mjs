@@ -112,7 +112,7 @@ test('/usage reports a SocialAPI error without technical details', () =>
     bot.mocks.usageError = true;
     await bot.sendText('/usage');
     const msg = await bot.waitFor(() => bot.texts().find((t) => t.startsWith('تعذّر جلب الرصيد')), 10_000);
-    assert.equal(msg, 'تعذّر جلب الرصيد: مفتاح SocialAPI غير صالح أو منتهٍ. حدّثه عبر wrangler secret put SOCIALAPI_KEY.');
+    assert.equal(msg, 'تعذّر جلب الرصيد: مفتاح SocialAPI غير صالح أو منتهٍ. حدّث SOCIALAPI_KEY من إعدادات الـ Worker في Cloudflare.');
   }));
 
 test('/pause stops the daily reminder and /resume brings it back', () =>

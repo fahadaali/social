@@ -4,17 +4,23 @@ name = "social"
 main = "src/index.ts"
 compatibility_date = "2026-09-15"
 
-# config/voice.md و config/pillars.md تُضمَّن كنصوص عند البناء (SPEC §6)
+# المتغيرات التي تضبطها من لوحة Cloudflare تبقى بعد كل نشر (انظر [vars] أدناه)
+keep_vars = true
+
+# لا روابط عامة لنسخ قديمة من الـ Worker ولا لمعاينات الفروع: يعمل البوت من رابطه الأساسي وحده،
+# فلا يمكن لأحد أن يربط تيليجرام بنسخة قديمة عبر /setup (NOTES.md القسم 10)
+preview_urls = false
+
+# config/*.md (SPEC §6) و migrations/*.sql تُضمَّن كنصوص عند البناء
 [[rules]]
 type = "Text"
-globs = ["**/*.md"]
+globs = ["**/*.md", "**/*.sql"]
 fallthrough = true
 
+# قاعدة D1 بلا معرّف: تُنشئها Cloudflare وتربطها عند أول نشر، أو تربطها أنت من لوحة الـ Worker باسم DB،
+# وتبقى مربوطة في كل نشر بعده. الجداول ينشئها الـ Worker نفسه من migrations/ (NOTES.md القسم 10).
 [[d1_databases]]
 binding = "DB"
-database_name = "social"
-# ← استبدل المعرّف بالقيمة التي يطبعها: npx wrangler d1 create social
-database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
 # Workers AI لتفريغ الرسائل الصوتية بـ @cf/openai/whisper-large-v3-turbo (NOTES.md القسم 6).
@@ -33,12 +39,20 @@ crons = ["0 6 * * *", "0 5 * * 0", "0 14 * * 4"]
 [observability]
 enabled = true
 
+# تُضبط من لوحة Cloudflare: الـ Worker ← Settings ← Variables and Secrets (ولا تُكتب هنا، وإلا غطّت على اللوحة):
+#   نص (Text):
+#     ALLOWED_TELEGRAM_USER_ID       معرّف تيليجرام الرقمي للمالك (من @userinfobot)
+#     SOCIALAPI_X_ACCOUNT_ID         معرّف حساب X في SocialAPI (يبدأ بـ acc_)
+#     SOCIALAPI_LINKEDIN_ACCOUNT_ID  معرّف حساب لينكدن في SocialAPI (يبدأ بـ acc_)
+#     DRY_RUN                        غيابه يعني أن وضع التجربة مفعّل؛ اضبطه على false للنشر الفعلي
+#   سر (Secret): TELEGRAM_BOT_TOKEN و ANTHROPIC_API_KEY و SOCIALAPI_KEY
+#   (TELEGRAM_WEBHOOK_SECRET اختياري: بدونه يُشتق سر الـ webhook من توكن البوت)
 [vars]
-ALLOWED_TELEGRAM_USER_ID = ""        # معرّف تيليجرام الرقمي للمالك (من @userinfobot)
-SOCIALAPI_X_ACCOUNT_ID = ""          # معرّف حساب X في SocialAPI (يبدأ بـ acc_)
-SOCIALAPI_LINKEDIN_ACCOUNT_ID = ""   # معرّف حساب لينكدن في SocialAPI (يبدأ بـ acc_)
 CLAUDE_MODEL = "claude-sonnet-5"
 CLAUDE_MODEL_FAST = "claude-haiku-4-5-20251001"
 REMINDER_AFTER_DAYS = "4"
 MONTHLY_POST_LIMIT = "10"
-DRY_RUN = "true"
+
+# معاينات الفروع غير main (Worker Previews) فارغة عمداً: بلا قاعدة بيانات ولا أسرار ولا متغيرات،
+# فلا تلمس بيانات البوت ولا تستقبل رسائله. وجود هذا القسم ولو فارغاً شرطٌ لنجاح بنائها في Cloudflare.
+[previews]

@@ -5,21 +5,25 @@ export interface Env {
   /** Workers AI لتفريغ الرسائل الصوتية (وافق عليه المالك — NOTES.md القسم 6). */
   AI: Ai;
 
-  // أسرار (wrangler secret put)
+  // أسرار (من لوحة Cloudflare بنوع Secret، أو wrangler secret put)
   TELEGRAM_BOT_TOKEN: string;
-  TELEGRAM_WEBHOOK_SECRET: string;
+  /** اختياري: بدونه يُشتق سر الـ webhook من توكن البوت (auth.ts). */
+  TELEGRAM_WEBHOOK_SECRET?: string;
   ANTHROPIC_API_KEY: string;
   SOCIALAPI_KEY: string;
 
-  // متغيرات ([vars] في wrangler.toml)
-  ALLOWED_TELEGRAM_USER_ID: string;
-  SOCIALAPI_X_ACCOUNT_ID: string;
-  SOCIALAPI_LINKEDIN_ACCOUNT_ID: string;
+  // متغيرات تُضبط من لوحة Cloudflare (قد تغيب حتى تُضبط، فتُقرأ بأمان أدناه)
+  ALLOWED_TELEGRAM_USER_ID?: string;
+  SOCIALAPI_X_ACCOUNT_ID?: string;
+  SOCIALAPI_LINKEDIN_ACCOUNT_ID?: string;
+  /** غيابه = وضع التجربة مفعّل (الافتراض الآمن). */
+  DRY_RUN?: string;
+
+  // متغيرات لها قيم في [vars] بـ wrangler.toml
   CLAUDE_MODEL: string;
   CLAUDE_MODEL_FAST: string;
   REMINDER_AFTER_DAYS: string;
   MONTHLY_POST_LIMIT: string;
-  DRY_RUN: string;
 }
 
 const str = (v: unknown): string => (v === undefined || v === null ? '' : String(v)).trim();

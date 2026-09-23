@@ -1,5 +1,7 @@
 #!/bin/sh
 # ضبط webhook تيليجرام مع secret_token (SPEC §4.1 و§14.6). يُشغَّل مرة واحدة بعد أول نشر.
+# الأسهل بلا طرفية: افتح /setup في رابط الـ Worker، فيربط تيليجرام بسر مشتق من التوكن (NOTES.md القسم 10).
+# هذا السكربت لمن ضبط TELEGRAM_WEBHOOK_SECRET صراحةً فقط.
 #
 # الاستخدام:
 #   TELEGRAM_BOT_TOKEN='...' TELEGRAM_WEBHOOK_SECRET='...' sh scripts/set-webhook.sh https://social.<حسابك>.workers.dev

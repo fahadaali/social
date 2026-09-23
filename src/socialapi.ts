@@ -77,6 +77,18 @@ export interface Post {
   targets?: PostTarget[];
 }
 
+/** حساب مربوط في مساحة عمل المفتاح (GET /accounts). */
+export interface Account {
+  id: string;
+  /** twitter لـ X، و linkedin للحساب الشخصي، و linkedin_page لصفحات الشركات (تجريبي). */
+  platform: string;
+  name?: string;
+  username?: string;
+  /** active أو reconnect_required */
+  status?: string;
+  reconnect_reason?: string;
+}
+
 export interface Usage {
   posts_used?: number;
   posts_limit?: number;
@@ -173,6 +185,15 @@ async function json<T>(env: Env, method: string, path: string, body?: unknown): 
 /** GET /usage — الاستهلاك والحدود للفترة الحالية (-1 = غير محدود). */
 export function getUsage(env: Env): Promise<Usage> {
   return json<Usage>(env, 'GET', '/usage');
+}
+
+/** GET /accounts — الحسابات المربوطة بمساحة عمل المفتاح (تتطلب صلاحية accounts:read). */
+export async function listAccounts(env: Env): Promise<Account[]> {
+  const r = await json<{ data?: unknown } | null>(env, 'GET', '/accounts');
+  const data: unknown[] = Array.isArray(r?.data) ? r.data : [];
+  return data.filter(
+    (a): a is Account => !!a && typeof (a as Account).id === 'string' && typeof (a as Account).platform === 'string',
+  );
 }
 
 /** POST /posts/validate — تحقق تجريبي بلا نشر. */
@@ -379,7 +400,7 @@ export function socialApiErrorMessage(err: unknown): string {
     const scope = typeof meta.required_scope === 'string' ? ` (${meta.required_scope})` : '';
     return `مفتاح SocialAPI لا يملك الصلاحية المطلوبة${scope}.`;
   }
-  if (status === 401 || code.startsWith('auth.')) return 'مفتاح SocialAPI غير صالح أو منتهٍ. حدّثه عبر wrangler secret put SOCIALAPI_KEY.';
+  if (status === 401 || code.startsWith('auth.')) return 'مفتاح SocialAPI غير صالح أو منتهٍ. حدّث SOCIALAPI_KEY من إعدادات الـ Worker في Cloudflare.';
   if (code === 'account.not_found') return 'معرّف الحساب غير موجود في SocialAPI. راجع SOCIALAPI_X_ACCOUNT_ID وSOCIALAPI_LINKEDIN_ACCOUNT_ID.';
   if (code === 'post.not_found') return 'المنشور غير موجود في SocialAPI (ربما حُذف من اللوحة).';
   if (code === 'post.state_invalid') return 'حالة المنشور في SocialAPI لا تسمح بهذا الإجراء الآن.';

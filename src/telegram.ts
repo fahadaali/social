@@ -227,6 +227,16 @@ export async function clearKeyboard(env: Env, chatId: number | string, messageId
   }
 }
 
+/** ربط تيليجرام بالـ Worker. متكرر بلا ضرر، ولا يُسقط التحديثات المعلّقة. */
+export async function setWebhook(env: Env, url: string, secret: string): Promise<void> {
+  await call(env, 'setWebhook', {
+    url,
+    secret_token: secret,
+    allowed_updates: ['message', 'callback_query'],
+    drop_pending_updates: false,
+  });
+}
+
 /** قائمة الأوامر في زر «القائمة» بجوار خانة الكتابة، لمحادثة واحدة فقط (لا تظهر لغيرها). */
 export async function setChatCommands(env: Env, chatId: number, commands: BotCommand[]): Promise<void> {
   await call(env, 'setMyCommands', { commands, scope: { type: 'chat', chat_id: chatId } });
