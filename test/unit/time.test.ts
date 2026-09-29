@@ -23,7 +23,7 @@ test('Riyadh is UTC+3 all year', () => {
 test('cron times in the spec map to Riyadh correctly', () => {
   // 0 6 * * * UTC → 9:00 ص الرياض
   assert.equal(riyadhParts(new Date('2026-09-22T06:00:00Z')).hour, 9);
-  // 0 5 * * 0 → الأحد 8:00 ص ، 0 14 * * 4 → الخميس 5:00 م
+  // 0 5 * * SUN → الأحد 8:00 ص ، 0 14 * * THU → الخميس 5:00 م
   assert.equal(riyadhParts(new Date('2026-09-27T05:00:00Z')).hour, 8);
   assert.equal(riyadhParts(new Date('2026-09-24T14:00:00Z')).hour, 17);
 });

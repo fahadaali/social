@@ -9,6 +9,7 @@ import {
   getState,
   listDraftsByStatus,
   remindersPaused,
+  setState,
   STATE_KEYS,
 } from '../db.ts';
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
@@ -17,6 +18,7 @@ import { ensureSchema } from '../migrations.ts';
 import { CB } from '../preview.ts';
 import { generateEventsPlan, generatePlan } from '../planning.ts';
 import type { EventDigest } from '../prompts/events.ts';
+import { CRON_DAILY, CRON_MIDWEEK_EVENTS, CRON_WEEKLY_PLAN, CRON_WEEKLY_REPORT, cronKey } from '../schedule.ts';
 import { followUpPosts } from '../publishing.ts';
 import { buildReport } from '../reporting.ts';
 import { SocialApiError, socialApiErrorMessage } from '../socialapi.ts';
@@ -25,11 +27,6 @@ import { button, sendMessage, TelegramError } from '../telegram.ts';
 import { daysAr, readyDraftsAr } from '../text.ts';
 import { daysBetween, parseUtc } from '../time.ts';
 
-// توقيت Cron بـ UTC؛ الرياض = UTC+3 (SPEC §9)
-export const CRON_DAILY = '0 6 * * *'; // يومياً 9:00 ص
-export const CRON_WEEKLY_PLAN = '0 5 * * 0'; // الأحد 8:00 ص
-export const CRON_MIDWEEK_EVENTS = '0 5 * * 3'; // الأربعاء 8:00 ص (NOTES.md القسم 11)
-export const CRON_WEEKLY_REPORT = '0 14 * * 4'; // الخميس 5:00 م
 
 const SNAPSHOT_MAX_AGE_DAYS = 7;
 
@@ -170,20 +167,28 @@ const TASKS: Record<string, CronTask> = {
 };
 
 export async function runScheduled(env: Env, cron: string): Promise<void> {
-  const task = TASKS[cron];
-  if (!task) {
-    console.warn(JSON.stringify({ evt: 'unknown_cron', cron }));
-    return;
-  }
   const owner = ownerId(env);
   if (!owner) {
     console.error(JSON.stringify({ evt: 'cron_skipped', reason: 'ALLOWED_TELEGRAM_USER_ID not set' }));
+    return;
+  }
+  const task = TASKS[cronKey(cron)];
+  if (!task) {
+    // موعد في wrangler.toml بلا مهمة تقابله: يُبلَّغ المالك بدل الصمت
+    console.warn(JSON.stringify({ evt: 'unknown_cron', cron }));
+    try {
+      await sendMessage(env, owner, `⚠️ وصل موعد مجدول غير معروف (${cron}). راجع [triggers] في wrangler.toml.`);
+    } catch (err) {
+      console.error(JSON.stringify({ evt: 'cron_notify_failed', code: err instanceof TelegramError ? err.code : 'unknown' }));
+    }
     return;
   }
   const ctx = makeCtx(env, Number(owner), task.budgetMs ?? CRON_BUDGET_MS);
   let failures: string[];
   try {
     await ensureSchema(env.DB);
+    // تعرضه /setup، فيُعرف من المتصفح أن المهام المجدولة تعمل
+    await setState(env.DB, STATE_KEYS.lastCronAt, new Date().toISOString());
     failures = await task.run(ctx);
   } catch (err) {
     failures = [errorSummary(err)];

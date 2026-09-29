@@ -139,7 +139,7 @@ test('weekly plan cron (Sunday 05:00 UTC) sends 3-topic plan with «صُغها»
         { idea_id: null, pillar: 'الامتثال', angle: 'زاوية 3', why_now: 'سبب 3' },
       ],
     }));
-    const result = await bot.scheduled('0 5 * * 0');
+    const result = await bot.scheduled('0 5 * * SUN');
     assert.equal(result.outcome, 'ok');
     const msg = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📅 خطة الأسبوع')), 5000, 'plan');
     assert.match(msg.body.text, /1\) موضوع جديد \[الحوكمة\]\nالزاوية: زاوية 1\nلماذا الآن: سبب 1/);
@@ -151,7 +151,7 @@ test('weekly plan cron failure is reported as «⚠️ فشلت مهمة الخ�
   withBot({}, async (bot) => {
     const bad = () => ({ status: 401, json: { type: 'error', error: { type: 'authentication_error', message: 'x' } } });
     bot.mocks.anthropic.push(bad);
-    const result = await bot.scheduled('0 5 * * 0');
+    const result = await bot.scheduled('0 5 * * SUN');
     assert.equal(result.outcome, 'exception');
     const msg = await bot.waitFor(() => bot.texts().find((t) => t.startsWith('⚠️ فشلت مهمة الخطة الأسبوعية')), 5000);
     assert.match(msg, /مفتاح Anthropic غير صالح/);
@@ -224,12 +224,12 @@ test('/stats surfaces a metrics failure with «أعد المحاولة»; one fa
 test('weekly report cron (Thursday 14:00 UTC) sends the report; a failure is reported to the owner', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 3 }]);
-    const ok = await bot.scheduled('0 14 * * 4');
+    const ok = await bot.scheduled('0 14 * * THU');
     assert.equal(ok.outcome, 'ok');
     await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 5000, 'report');
 
     bot.mocks.metrics = () => ({ status: 401, json: { error: { code: 'auth.invalid_key', message: 'bad' } } });
-    const bad = await bot.scheduled('0 14 * * 4');
+    const bad = await bot.scheduled('0 14 * * THU');
     assert.equal(bad.outcome, 'exception');
     await bot.waitFor(() => bot.texts().some((t) => t.startsWith('⚠️ فشلت مهمة تقرير الأداء الأسبوعي: مفتاح SocialAPI غير صالح')), 5000);
   }));
@@ -250,18 +250,18 @@ test('the plan uses the latest metrics snapshot (pillar performance) to weigh su
 test('the Sunday plan refreshes a missing/old snapshot first, and still plans if metrics fail', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 1 }]);
-    await bot.scheduled('0 5 * * 0');
+    await bot.scheduled('0 5 * * SUN');
     await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📅 خطة الأسبوع')), 5000);
     assert.equal(bot.social('GET').filter((c) => c.path.endsWith('/metrics')).length, 1);
     assert.match(bot.anthropic('plan')[0].body.messages[0].content, /<performance>/);
 
     // لقطة حديثة: لا تحديث. ولقطة قديمة مع فشل المقاييس: الخطة تستمر
-    await bot.scheduled('0 5 * * 0');
+    await bot.scheduled('0 5 * * SUN');
     await bot.settle();
     assert.equal(bot.social('GET').filter((c) => c.path.endsWith('/metrics')).length, 1, 'fresh snapshot reused');
     await bot.db.prepare("UPDATE state SET value = json_set(value, '$.at', datetime('now', '-9 days')) WHERE key = 'metrics_snapshot'").run();
     bot.mocks.metrics = () => ({ status: 500, json: { error: { code: 'system.internal', message: 'x' } } });
-    const r = await bot.scheduled('0 5 * * 0');
+    const r = await bot.scheduled('0 5 * * SUN');
     assert.equal(r.outcome, 'ok');
     assert.equal(bot.tg('sendMessage').filter((c) => c.body.text.startsWith('📅 خطة الأسبوع')).length, 3);
   }));

@@ -113,6 +113,8 @@ export const STATE_KEYS = {
   lastEventsPlan: 'last_events_plan',
   /** الأحداث المقترحة مؤخراً، حتى لا يعيدها البحث التالي. */
   recentEvents: 'recent_events',
+  /** آخر تشغيل لمهمة مجدولة، تعرضه /setup. */
+  lastCronAt: 'last_cron_at',
   metricsSnapshot: 'metrics_snapshot',
 } as const;
 

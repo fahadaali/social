@@ -13,8 +13,8 @@ async function withBot(opts, fn) {
   }
 }
 
-const SUNDAY = '0 5 * * 0';
-const WEDNESDAY = '0 5 * * 3';
+const SUNDAY = '0 5 * * SUN';
+const WEDNESDAY = '0 5 * * WED';
 const CMA_URL = 'https://www.cma.gov.sa/news/governance-update';
 const CMA_TITLE = 'هيئة السوق المالية تحدّث لائحة حوكمة الشركات';
 

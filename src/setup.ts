@@ -2,9 +2,15 @@
 // لا تقبل أي مدخلات ولا تعرض أي قيمة: أسماء الإعدادات الناقصة فقط، ونتيجة الربط. تكرار فتحها لا يضر.
 
 import { webhookSecret } from './auth.ts';
+import { getState, STATE_KEYS } from './db.ts';
 import { isDryRun, ownerId, type Env } from './env.ts';
 import { ensureSchema } from './migrations.ts';
 import { setWebhook, TelegramError } from './telegram.ts';
+import { formatRiyadh } from './time.ts';
+
+const DAY_MS = 86_400_000;
+// المهمة اليومية تعمل كل يوم، فغياب أي تشغيل يومين يعني أن المواعيد لا تعمل
+const CRON_STALE_DAYS = 2;
 
 const SETTINGS: ReadonlyArray<readonly [keyof Env, 'Secret' | 'Text']> = [
   ['TELEGRAM_BOT_TOKEN', 'Secret'],
@@ -33,11 +39,13 @@ export async function handleSetup(request: Request, env: Env): Promise<Response>
     items.push(`<li>${ok ? '✅' : '❌'} ${html}</li>`);
   };
 
+  let dbReady = false;
   if (!env.DB) {
     mark(false, `قاعدة البيانات غير مربوطة: أضف من إعدادات الـ Worker ربط D1 باسم ${code('DB')}`);
   } else {
     try {
       await ensureSchema(env.DB);
+      dbReady = true;
       mark(true, 'قاعدة البيانات وجداولها جاهزة');
     } catch (err) {
       console.error(JSON.stringify({ evt: 'setup_schema_failed', err: err instanceof Error ? err.message : 'unknown' }));
@@ -63,6 +71,18 @@ export async function handleSetup(request: Request, env: Env): Promise<Response>
       mark(true, `تيليجرام مربوط بالعنوان ${code(hook)}`);
     } catch (err) {
       mark(false, `تعذّر ربط تيليجرام: ${escapeHtml(telegramReason(err))}`);
+    }
+  }
+
+  if (dbReady) {
+    const last = await getState(env.DB, STATE_KEYS.lastCronAt);
+    const at = last ? Date.parse(last) : NaN;
+    if (Number.isNaN(at)) {
+      items.push('<li>ℹ️ لم تعمل أي مهمة مجدولة بعد، وأولها يومياً 9 ص. إن مرّ يوم فراجع Settings ← Trigger Events في الـ Worker.</li>');
+    } else if (Date.now() - at > CRON_STALE_DAYS * DAY_MS) {
+      mark(false, `آخر مهمة مجدولة عملت في ${formatRiyadh(new Date(at))}، ولم تعمل بعدها: راجع Settings ← Trigger Events في الـ Worker`);
+    } else {
+      mark(true, `المهام المجدولة تعمل، وآخرها في ${formatRiyadh(new Date(at))}`);
     }
   }
 
