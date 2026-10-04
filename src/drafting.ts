@@ -22,6 +22,7 @@ import { DRAFT_MAX_TOKENS, DRAFT_SCHEMA, draftUser, fixViolationsTurn, regenerat
 import { reviseUser } from './prompts/revise.ts';
 import { writerSystemPrompt } from './prompts/shared.ts';
 import { clearKeyboard, editMessageText, sendMessage } from './telegram.ts';
+import { checkStyle } from './style.ts';
 import { checkDraftLimits, parseDraftContent, type DraftContent } from './text.ts';
 
 export const reviseNotesKey = (draftId: number) => `revise_notes:${draftId}`;
@@ -46,17 +47,22 @@ function callWriter(ctx: Ctx, messages: ClaudeMessage[], label: string): Promise
   });
 }
 
-const hardCount = (c: DraftContent) => checkDraftLimits(c).filter((v) => v.hard).length;
+/** الأولوية لمخالفات الطول المانعة للنشر، ثم لمخالفات الأسلوب. الأقل أفضل. */
+const score = (c: DraftContent, style: boolean) =>
+  checkDraftLimits(c).filter((v) => v.hard).length * 100 + (style ? checkStyle(c).length : 0);
 
 /**
- * توليد ثم تحقق برمجي من الأطوال (SPEC §10). عند مخالفة تمنع النشر (تغريدة أطول من حد X مثلاً)
- * يُعاد الطلب مرة واحدة مع ذكر الخطأ — إن كان الوقت المتبقي يكفي، وإلا تُعرض المسودة مع التنبيه.
+ * توليد ثم تحقق برمجي (SPEC §10): الأطوال، والعبارات الممنوعة في دليل الأسلوب.
+ * عند مخالفة تمنع النشر (تغريدة أطول من حد X مثلاً) أو عبارة ممنوعة، يُعاد الطلب مرة واحدة مع ذكر الخطأ
+ * — إن كان الوقت المتبقي يكفي، وإلا تُعرض المسودة مع التنبيه.
+ * style=false في التعديل وفق الملاحظات: لا يُعاد الطلب بسبب الأسلوب حتى لا يخالف ما طلبه المالك بنصه.
  */
-async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: string): Promise<DraftContent> {
+async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: string, style = true): Promise<DraftContent> {
   const started = Date.now();
   const first = await callWriter(ctx, messages, label);
   const violations = checkDraftLimits(first);
-  if (!violations.some((v) => v.hard)) return first;
+  const styleViolations = style ? checkStyle(first) : [];
+  if (!violations.some((v) => v.hard) && styleViolations.length === 0) return first;
 
   const firstDuration = Date.now() - started;
   if (remaining(ctx) < firstDuration * 1.2 + 4_000) {
@@ -64,8 +70,9 @@ async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: strin
     return first;
   }
   try {
-    const second = await callWriter(ctx, [...messages, ...fixViolationsTurn(first, violations)], `${label}_fix`);
-    return hardCount(second) <= hardCount(first) ? second : first;
+    const turn = fixViolationsTurn(first, [...violations, ...styleViolations]);
+    const second = await callWriter(ctx, [...messages, ...turn], `${label}_fix`);
+    return score(second, style) <= score(first, style) ? second : first;
   } catch (err) {
     console.warn(JSON.stringify({ evt: 'fix_failed', label, err: err instanceof Error ? err.message : 'unknown' }));
     return first;
@@ -196,7 +203,7 @@ export async function reviseDraft(ctx: Ctx, draftId: number, notes: string): Pro
   await setState(ctx.env.DB, reviseNotesKey(draft.id), notes);
   const placeholder = await sendMessage(ctx.env, ctx.chatId, `⏳ جاري تعديل المسودة #${draft.id} وفق ملاحظاتك…`);
   try {
-    const content = await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, notes) }], 'revise');
+    const content = await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, notes) }], 'revise', false);
     const updated = await replaceDraftContent(ctx.env.DB, draft.id, content);
     if (!updated) {
       await editMessageText(ctx.env, ctx.chatId, placeholder.message_id, `تغيّرت حالة المسودة #${draft.id} فلم تُعدَّل.`);

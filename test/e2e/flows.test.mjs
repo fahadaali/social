@@ -134,6 +134,36 @@ test('a tweet over the X limit triggers exactly one corrective retry that names 
     assert.match(preview, /1\/ نسخة مختصرة/);
   }));
 
+test('a banned stock phrase triggers one corrective retry that names it', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.anthropic.push(
+      null, // classify → الرد الافتراضي
+      () => draftOutput({ x_segments: ['في عالم اليوم المتسارع، الحوكمة ليست مجرد لوائح'] }),
+      () => draftOutput({ x_segments: ['مصفوفة الصلاحيات أول ما أطلبه من أي جمعية'] }),
+    );
+    const preview = await makeDraft(bot);
+    const drafts = bot.anthropic('draft');
+    assert.equal(drafts.length, 2);
+    const fix = drafts[1].body.messages;
+    assert.match(fix[2].content, /عبارات ممنوعة في X: «في عالم اليوم»، «ليس مجرد… بل»/);
+    assert.match(fix[2].content, /لا تُستبدل بمرادفها/);
+    assert.match(preview, /1\/ مصفوفة الصلاحيات/);
+    assert.doesNotMatch(preview, /عبارات ممنوعة/);
+  }));
+
+test('revising per owner notes is not retried for style; a remaining phrase is only flagged in the preview', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    const before = bot.anthropic('draft').length;
+    await bot.press(bot.button('✏️ عدّل'));
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✏️ اكتب ملاحظاتك على المسودة #1')), 5000);
+    bot.mocks.anthropic.push(() => draftOutput({ x_segments: ['وفي الختام، هذه نسختي'] }));
+    await bot.sendText('أضف «وفي الختام» في آخرها');
+    const preview = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 2)')), 15_000, 'revised preview');
+    assert.equal(bot.anthropic('draft').length, before + 1);
+    assert.match(preview.body.text, /⚠️ عبارات ممنوعة في X: «في الختام»/);
+  }));
+
 test('Anthropic overload: one retry after ~2s, then a clear message with a «أعد المحاولة» button', () =>
   withBot({}, async (bot) => {
     await bot.sendText('فكرة');

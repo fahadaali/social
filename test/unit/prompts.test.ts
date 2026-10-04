@@ -14,8 +14,8 @@ import {
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
-test('config templates contain only instructions (nothing invented for the owner)', () => {
-  assert.equal(isEffectivelyEmpty(read('config/voice.md')), true);
+test('voice guide is filled by the owner; pillars template contains only instructions', () => {
+  assert.equal(isEffectivelyEmpty(read('config/voice.md')), false);
   assert.equal(isEffectivelyEmpty(read('config/pillars.md')), true);
   assert.deepEqual(parsePillars(read('config/pillars.md')), []);
 });
@@ -34,9 +34,12 @@ test('stripComments removes HTML comments', () => {
 });
 
 test('writer system prompt embeds the shared rules and marks an unfilled voice guide', () => {
-  const s = writerSystemPrompt(read('config/voice.md'), read('config/pillars.md'));
+  const s = writerSystemPrompt('<!-- قالب -->\n# دليل الأسلوب\n## النبرة والأسلوب', read('config/pillars.md'));
   assert.ok(s.includes(SHARED_RULES));
   assert.match(s, /لم يُعبّأ بعد/);
+  const real = writerSystemPrompt(read('config/voice.md'), read('config/pillars.md'));
+  assert.match(real, /<voice>[\s\S]*## المرجعيات[\s\S]*<\/voice>/);
+  assert.doesNotMatch(real, /لا يعدّل Claude Code/);
   const filled = writerSystemPrompt('## النبرة\nمباشرة وهادئة', '## الحوكمة');
   assert.match(filled, /<voice>[\s\S]*مباشرة وهادئة[\s\S]*<\/voice>/);
 });
