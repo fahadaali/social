@@ -116,6 +116,8 @@ export const STATE_KEYS = {
   /** آخر تشغيل لمهمة مجدولة، تعرضه /setup. */
   lastCronAt: 'last_cron_at',
   metricsSnapshot: 'metrics_snapshot',
+  /** وضع التجربة من /mode ('true' أو 'false')؛ يتقدم على متغير DRY_RUN (mode.ts). */
+  dryRun: 'dry_run',
 } as const;
 
 /** هل تذكيرات الانقطاع موقوفة (/pause)؟ */

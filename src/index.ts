@@ -8,6 +8,7 @@ import { handleCallback } from './handlers/callbacks.ts';
 import { errorSummary, runScheduled } from './handlers/cron.ts';
 import { handleMessage } from './handlers/messages.ts';
 import { ensureSchema } from './migrations.ts';
+import { withSavedMode } from './mode.ts';
 import { handleSetup } from './setup.ts';
 import { sendMessage, type TgUpdate } from './telegram.ts';
 
@@ -23,6 +24,7 @@ async function processUpdate(env: Env, update: TgUpdate, chatId: number): Promis
       return;
     }
     await ensureSchema(env.DB);
+    ctx.env = await withSavedMode(env);
     // منع التكرار (SPEC §4.3)
     if (!(await markUpdateProcessed(env.DB, update.update_id))) return;
     if (update.message) await handleMessage(ctx, update.message);

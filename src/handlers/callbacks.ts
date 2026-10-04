@@ -25,6 +25,7 @@ import {
   scheduledRefusal,
   showRescheduleOptions,
 } from '../managing.ts';
+import { cancelModeChange, requestLiveMode, setMode } from '../mode.ts';
 import { pickSuggestion, runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
 import { retryLastVoice } from '../voice.ts';
@@ -362,6 +363,17 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         if (!a || index === null) break;
         await answer();
         await pickSuggestion(ctx, a, index);
+        break;
+      }
+
+      // ----- وضع التجربة (mode.ts) -----
+      case 'mod': {
+        if (messageId === null) break;
+        await answer();
+        if (a === 'live') await requestLiveMode(ctx, messageId);
+        else if (a === 'ok') await setMode(ctx, false, messageId);
+        else if (a === 'test') await setMode(ctx, true, messageId);
+        else if (a === 'no') await cancelModeChange(ctx, messageId);
         break;
       }
 

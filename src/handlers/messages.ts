@@ -10,6 +10,7 @@ import { accountId, isDryRun, type Env } from '../env.ts';
 import { listIdeas, saveIdea } from '../ideas.ts';
 import { attachImage, pickImage } from '../images.ts';
 import { BOT_COMMANDS, menuCommand, menuKeyboard } from '../menu.ts';
+import { showMode } from '../mode.ts';
 import { runPlan } from '../planning.ts';
 import { runStats } from '../reporting.ts';
 import { setRemindersPaused, showQueue, showUsage } from '../status.ts';
@@ -24,13 +25,14 @@ const COMMANDS_HELP = `الأوامر:
 /usage — رصيد المنشورات المتبقي هذا الشهر في SocialAPI
 /pause و /resume — إيقاف تذكيرات الانقطاع واستئنافها
 /export — نسخة احتياطية من أفكارك ومسوداتك (ملف JSON)
+/mode — وضع التجربة أو النشر الفعلي، وتبديله
 /help — المساعدة
 
 تلقائياً: متابعة يومية 9 ص، وخطة أسبوعية مع أحداث الأسبوع الأحد 8 ص، ونشرة أحداث الأربعاء 8 ص، وتقرير أداء الخميس 5 م (بتوقيت الرياض).`;
 
 function configWarnings(env: Env): string[] {
   const w: string[] = [];
-  if (isDryRun(env)) w.push('🧪 وضع التجربة مفعّل: المنشورات تُحفظ مسودات في SocialAPI ولا تُنشر.');
+  if (isDryRun(env)) w.push('🧪 وضع التجربة مفعّل: المنشورات تُحفظ مسودات في SocialAPI ولا تُنشر. للنشر الفعلي: /mode');
   if (PILLARS.length === 0) w.push('⚠️ لم تُعبّأ محاور المحتوى في config/pillars.md بعد.');
   if (!VOICE_FILLED) w.push('⚠️ لم يُعبّأ دليل الأسلوب في config/voice.md بعد.');
   if (!accountId(env, 'x')) w.push('⚠️ لم يُضبط SOCIALAPI_X_ACCOUNT_ID.');
@@ -126,6 +128,9 @@ async function handleCommand(ctx: Ctx, text: string): Promise<void> {
       return;
     case '/export':
       await exportBackup(ctx);
+      return;
+    case '/mode':
+      await showMode(ctx);
       return;
     default:
       await sendMessage(ctx.env, ctx.chatId, 'أمر غير معروف. أرسل /help لعرض الأوامر.');

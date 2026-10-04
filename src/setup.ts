@@ -5,6 +5,7 @@ import { webhookSecret } from './auth.ts';
 import { getState, STATE_KEYS } from './db.ts';
 import { isDryRun, ownerId, type Env } from './env.ts';
 import { ensureSchema } from './migrations.ts';
+import { withSavedMode } from './mode.ts';
 import { setWebhook, TelegramError } from './telegram.ts';
 import { formatRiyadh } from './time.ts';
 
@@ -86,10 +87,11 @@ export async function handleSetup(request: Request, env: Env): Promise<Response>
     }
   }
 
+  const modeEnv = dbReady ? await withSavedMode(env) : env;
   items.push(
-    isDryRun(env)
-      ? `<li>🧪 وضع التجربة مفعّل: لا نشر فعلي حتى تضيف ${code('DRY_RUN')} بقيمة ${code('false')}</li>`
-      : `<li>🚀 النشر الفعلي مفعّل (${code('DRY_RUN = false')})</li>`,
+    isDryRun(modeEnv)
+      ? `<li>🧪 وضع التجربة مفعّل: لا نشر فعلي. بدّله من البوت بالأمر ${code('/mode')}</li>`
+      : `<li>🚀 النشر الفعلي مفعّل. بدّله من البوت بالأمر ${code('/mode')}</li>`,
   );
   const next = missing
     ? 'أكمل ما عليه ❌ من لوحة Cloudflare، ثم افتح هذه الصفحة من جديد.'

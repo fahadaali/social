@@ -277,6 +277,75 @@ test('live publish: publish_now → poll status (5s) → permalinks, D1 + last_p
     assert.ok((await bot.row("SELECT value FROM state WHERE key = 'last_published_at'")).value);
   }));
 
+// ---------- وضع التجربة من البوت (/mode) ----------
+
+/** ينتظر الرد رقم nth الذي يبدأ بالنص المعطى (الرسالة نفسها تُعدَّل أكثر من مرة). */
+const modeReply = (bot, prefix, nth = 1) =>
+  bot.waitFor(
+    () => [...bot.tg('editMessageText'), ...bot.tg('sendMessage')].filter((c) => c.body.text.startsWith(prefix)).at(nth - 1),
+    10_000,
+    prefix,
+  );
+
+test('/mode: switching to live needs an explicit confirmation, is saved, and old test-mode confirmations stop working', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press(bot.button('✅ انشر الآن'));
+    await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد النشر')), 10_000);
+    const staleDry = bot.button('تأكيد');
+
+    await bot.sendText('/mode');
+    await modeReply(bot, '🧪 وضع التجربة مفعّل');
+    await bot.press(bot.button('فعّل النشر الفعلي'), { messageId: 8000 });
+    await modeReply(bot, 'تفعيل النشر الفعلي؟');
+    assert.equal(await bot.row("SELECT value FROM state WHERE key = 'dry_run'"), null, 'nothing saved before confirming');
+
+    // «إلغاء» يبقي الوضع كما هو
+    await bot.press(bot.button('إلغاء'), { messageId: 8000 });
+    await modeReply(bot, 'أُلغي. 🧪 وضع التجربة مفعّل');
+    assert.equal(await bot.row("SELECT value FROM state WHERE key = 'dry_run'"), null);
+
+    await bot.press(bot.button('فعّل النشر الفعلي'), { messageId: 8000 });
+    await modeReply(bot, 'تفعيل النشر الفعلي؟', 2);
+    await bot.press(bot.button('نعم، فعّل النشر الفعلي'), { messageId: 8000 });
+    await modeReply(bot, '🚀 النشر الفعلي مفعّل');
+    assert.equal((await bot.row("SELECT value FROM state WHERE key = 'dry_run'")).value, 'false');
+
+    // تأكيد عُرض في وضع التجربة لا ينشر فعلياً بعد التبديل
+    await bot.press(staleDry, { messageId: 8100 });
+    await modeReply(bot, 'لم يعد هذا التأكيد صالحاً');
+    assert.equal(bot.social('POST', '/v1/posts').length, 0);
+
+    // تأكيد جديد ينشر فعلياً (زر «انشر الآن» في المعاينة السابقة)
+    await bot.press('pub:1');
+    const confirm = await bot.waitFor(
+      () => bot.tg('sendMessage').filter((c) => c.body.text.startsWith('تأكيد النشر')).at(1),
+      10_000,
+      'live confirmation',
+    );
+    assert.doesNotMatch(confirm.body.text, /وضع التجربة/);
+    await bot.press(bot.button('تأكيد'), { messageId: 8200 });
+    await modeReply(bot, '✅ نُشرت المسودة #1');
+    assert.equal(bot.social('POST', '/v1/posts')[0].body.publish_now, true);
+  }));
+
+test('/mode: the saved mode overrides the DRY_RUN variable, and going back to test mode needs no confirmation', () =>
+  withBot({ vars: { DRY_RUN: 'false' } }, async (bot) => {
+    await bot.sendText('/mode');
+    await modeReply(bot, '🚀 النشر الفعلي مفعّل');
+    await bot.press(bot.button('ارجع إلى وضع التجربة'), { messageId: 8300 });
+    await modeReply(bot, '🧪 وضع التجربة مفعّل');
+    assert.equal((await bot.row("SELECT value FROM state WHERE key = 'dry_run'")).value, 'true');
+
+    await makeDraft(bot);
+    await bot.press(bot.button('✅ انشر الآن'));
+    const confirm = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد النشر')), 10_000);
+    assert.match(confirm.body.text, /🧪 وضع التجربة مفعّل/);
+    await bot.press(bot.button('تأكيد'), { messageId: 8400 });
+    await modeReply(bot, '🧪 وضع التجربة: حُفظت كمسودة');
+    assert.equal(bot.social('POST', '/v1/posts')[0].body.publish_now, undefined);
+  }));
+
 test('double-tapping «تأكيد» creates only one post', () =>
   withBot({ vars: { DRY_RUN: 'false' } }, async (bot) => {
     await makeDraft(bot);

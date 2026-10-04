@@ -47,7 +47,8 @@ enabled = true
 #     ALLOWED_TELEGRAM_USER_ID       معرّف تيليجرام الرقمي للمالك (من @userinfobot)
 #     SOCIALAPI_X_ACCOUNT_ID         معرّف حساب X في SocialAPI (يبدأ بـ acc_)
 #     SOCIALAPI_LINKEDIN_ACCOUNT_ID  معرّف حساب لينكدن في SocialAPI (يبدأ بـ acc_)
-#     DRY_RUN                        غيابه يعني أن وضع التجربة مفعّل؛ اضبطه على false للنشر الفعلي
+#     DRY_RUN                        اختياري: الوضع يُبدَّل من البوت بالأمر /mode، واختيار البوت يتقدم عليه.
+#                                    بلا اختيار من البوت: غيابه يعني وضع التجربة، و false يعني النشر الفعلي
 #   سر (Secret): TELEGRAM_BOT_TOKEN و ANTHROPIC_API_KEY و SOCIALAPI_KEY
 #   (TELEGRAM_WEBHOOK_SECRET اختياري: بدونه يُشتق سر الـ webhook من توكن البوت)
 [vars]

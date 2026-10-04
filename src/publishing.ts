@@ -50,8 +50,9 @@ const TERMINAL: ReadonlySet<string> = new Set(['published', 'partial', 'failed',
  * بصمة قصيرة للنسخة والمنصات والصورة تُضمَّن في زر «تأكيد»،
  * فإن تغيّر شيء بعد عرض التأكيد يُرفض الزر القديم ولا يُنشر محتوى لم يره المالك.
  */
-export function fingerprint(d: Pick<Draft, 'revision' | 'platforms' | 'media_id'>): string {
-  return fnv(`${d.revision}|${[...d.platforms].sort().join(',')}|${d.media_id ?? ''}`);
+export function fingerprint(d: Pick<Draft, 'revision' | 'platforms' | 'media_id'>, dryRun = false): string {
+  // الوضع جزء من البصمة: تأكيد عُرض في وضع التجربة لا ينشر فعلياً بعد التبديل من /mode
+  return fnv(`${d.revision}|${[...d.platforms].sort().join(',')}|${d.media_id ?? ''}${dryRun ? '|dry' : ''}`);
 }
 
 /**
@@ -199,7 +200,7 @@ export async function requestConfirmation(ctx: Ctx, draftId: number, mode: UserM
   if (d.media_id && d.platforms.includes('x')) lines.push('ℹ️ الصورة تُنشر مع لينكدن فقط.');
   if (check.warnings.length) lines.push(`تنبيهات التحقق:\n${bullet(check.warnings)}`);
 
-  const fp = fingerprint(d);
+  const fp = fingerprint(d, isDryRun(ctx.env));
   const data =
     mode.kind === 'now'
       ? CB.confirmNow(d.id, fp)
@@ -236,8 +237,8 @@ export async function confirmPublish(
     editMessageText(env, ctx.chatId, confirmMessageId, text, keyboard);
 
   const before = await getDraft(db, draftId);
-  if (!before || !isEditable(before) || fingerprint(before) !== fp) {
-    await say('لم يعد هذا التأكيد صالحاً: تغيّرت المسودة أو نُفّذ الطلب من قبل. اضغط «انشر» أو «جدول» من جديد.');
+  if (!before || !isEditable(before) || fingerprint(before, isDryRun(env)) !== fp) {
+    await say('لم يعد هذا التأكيد صالحاً: تغيّرت المسودة أو وضع النشر، أو نُفّذ الطلب من قبل. اضغط «انشر» أو «جدول» من جديد.');
     return;
   }
   if (mode.kind === 'schedule' && mode.at.getTime() - Date.now() < MIN_SCHEDULE_LEAD_MS) {

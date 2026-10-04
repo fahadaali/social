@@ -10,13 +10,14 @@ test('every grid label maps to its command; other texts stay ideas', () => {
   for (const text of ['أفكاري', '💡 أفكاري الجديدة', 'قائمة الانتظار', '']) assert.equal(menuCommand(text), null, text);
 });
 
-test('the grid: 4 rows × 2, persistent, reminder button follows the paused state', () => {
+test('the grid: 4 rows × 2 plus the mode button, persistent, reminder button follows the paused state', () => {
   const texts = (paused: boolean) => menuKeyboard(paused).keyboard.map((r) => r.map((b) => b.text));
   assert.deepEqual(texts(false), [
     ['💡 أفكاري', '📋 قائمة الانتظار'],
     ['🗓 اقترح موضوعات', '📊 تقرير الأداء'],
     ['💳 الرصيد', '💾 نسخة احتياطية'],
     ['⏸ أوقف التذكير', '❓ مساعدة'],
+    ['⚙️ وضع النشر'],
   ]);
   assert.equal(texts(true)[3]?.[0], '▶️ استأنف التذكير');
   const kb = menuKeyboard(false);

@@ -18,6 +18,7 @@ const GRID = [
   ['🗓 اقترح موضوعات', '📊 تقرير الأداء'],
   ['💳 الرصيد', '💾 نسخة احتياطية'],
   ['⏸ أوقف التذكير', '❓ مساعدة'],
+  ['⚙️ وضع النشر'],
 ];
 const gridOf = (call) => call.body.reply_markup.keyboard.map((r) => r.map((b) => b.text));
 
@@ -42,7 +43,7 @@ test('/start sends the persistent grid and sets a command menu for the owner cha
     assert.deepEqual(menu.body.scope, { type: 'chat', chat_id: OWNER });
     assert.deepEqual(
       menu.body.commands.map((c) => c.command),
-      ['ideas', 'queue', 'plan', 'stats', 'usage', 'export', 'pause', 'resume', 'help'],
+      ['ideas', 'queue', 'plan', 'stats', 'usage', 'export', 'pause', 'resume', 'mode', 'help'],
     );
   }));
 

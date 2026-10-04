@@ -186,4 +186,5 @@ test('confirmation fingerprint changes with revision, platforms and image', () =
   assert.notEqual(fingerprint({ ...base, revision: 1 }), fp);
   assert.notEqual(fingerprint({ ...base, platforms: ['x'] }), fp);
   assert.notEqual(fingerprint({ ...base, media_id: 'm1' }), fp);
+  assert.notEqual(fingerprint(base, true), fp, 'a test-mode confirmation is not valid in live mode');
 });

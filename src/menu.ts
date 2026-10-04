@@ -13,6 +13,7 @@ export const MENU_LABELS = {
   pause: '⏸ أوقف التذكير',
   resume: '▶️ استأنف التذكير',
   help: '❓ مساعدة',
+  mode: '⚙️ وضع النشر',
 } as const;
 
 type MenuCommand = keyof typeof MENU_LABELS;
@@ -29,7 +30,7 @@ export function menuCommand(text: string): string | null {
   return COMMAND_BY_LABEL.get(normalize(text)) ?? null;
 }
 
-/** اللوحة الثابتة؛ زر التذكير يتبدّل بين «أوقف» و«استأنف» بحسب حالته. */
+/** اللوحة الثابتة؛ زر التذكير يتبدّل بين «أوقف» و«استأنف» بحسب حالته، وزر وضع النشر في صف وحده. */
 export function menuKeyboard(remindersPaused: boolean): ReplyKeyboard {
   const L = MENU_LABELS;
   return {
@@ -38,6 +39,7 @@ export function menuKeyboard(remindersPaused: boolean): ReplyKeyboard {
       [{ text: L.plan }, { text: L.stats }],
       [{ text: L.usage }, { text: L.export }],
       [{ text: remindersPaused ? L.resume : L.pause }, { text: L.help }],
+      [{ text: L.mode }],
     ],
     is_persistent: true,
     resize_keyboard: true,
@@ -55,5 +57,6 @@ export const BOT_COMMANDS: BotCommand[] = [
   { command: 'export', description: 'نسخة احتياطية (ملف JSON)' },
   { command: 'pause', description: 'أوقف تذكيرات الانقطاع' },
   { command: 'resume', description: 'استأنف تذكيرات الانقطاع' },
+  { command: 'mode', description: 'وضع التجربة أو النشر الفعلي' },
   { command: 'help', description: 'طريقة العمل والأوامر' },
 ];

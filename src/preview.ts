@@ -48,6 +48,11 @@ export const CB = {
   snap: (draftId: number) => `snp:${draftId}`,
   archiveIdea: (ideaId: number) => `arc:${ideaId}`,
   unarchiveIdea: (ideaId: number) => `una:${ideaId}`,
+  // وضع التجربة (mode.ts)
+  modeLive: () => 'mod:live',
+  modeLiveConfirm: () => 'mod:ok',
+  modeTest: () => 'mod:test',
+  modeCancel: () => 'mod:no',
 } as const;
 
 export const EDITABLE_STATUSES = ['pending', 'failed'] as const;
