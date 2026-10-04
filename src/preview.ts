@@ -48,6 +48,18 @@ export const CB = {
   snap: (draftId: number) => `snp:${draftId}`,
   archiveIdea: (ideaId: number) => `arc:${ideaId}`,
   unarchiveIdea: (ideaId: number) => `una:${ideaId}`,
+  // الحذف النهائي (deleting.ts): الضغطة الأولى تعرض التأكيد، والثانية تحذف
+  deleteDraft: (draftId: number) => `dd:${draftId}`,
+  confirmDeleteDraft: (draftId: number, pfp: string) => `ddo:${draftId}:${pfp}`,
+  deleteIdea: (ideaId: number) => `di:${ideaId}`,
+  confirmDeleteIdea: (ideaId: number) => `dio:${ideaId}`,
+  keepIdea: (ideaId: number) => `dix:${ideaId}`,
+  // maxId: آخر عنصر رآه المالك وقت الطلب، فلا يُحذف ما أُضيف بعده
+  deleteBank: (maxId: number) => `dbk:${maxId}`,
+  confirmDeleteBank: (maxId: number) => `dbo:${maxId}`,
+  deletePending: (maxId: number) => `dpd:${maxId}`,
+  confirmDeletePending: (maxId: number) => `dpo:${maxId}`,
+  cancelDelete: () => 'dlx',
   // وضع التجربة (mode.ts)
   modeLive: () => 'mod:live',
   modeLiveConfirm: () => 'mod:ok',
@@ -162,7 +174,7 @@ export function draftKeyboard(d: Draft): InlineKeyboard {
         button(`X ${on('x') ? '✓' : '✗'}`, CB.toggle(d.id, 'x')),
         button(`LinkedIn ${on('linkedin') ? '✓' : '✗'}`, CB.toggle(d.id, 'li')),
       ],
-      [button('🗑 تجاهل', CB.reject(d.id))],
+      [button('🗑 تجاهل', CB.reject(d.id)), button('❌ احذف', CB.deleteDraft(d.id))],
     ],
   };
 }
@@ -179,6 +191,7 @@ export function previewKeyboard(d: Draft): InlineKeyboard {
   if (d.socialapi_post_id) {
     if (d.status === 'scheduled') {
       rows.push([button('🕒 غيّر الموعد', CB.reschedule(d.id)), button('🚫 ألغِ الجدولة', CB.cancelSchedule(d.id))]);
+      rows.push([button('❌ احذف', CB.deleteDraft(d.id))]);
     } else if (d.status === 'partial') {
       rows.push([button('🔁 أعد محاولة ما فشل', CB.retryPartial(d.id))]);
     } else if (d.status === 'publishing') {
@@ -222,6 +235,12 @@ export function rescheduleKeyboard(d: Draft, options: ScheduleOption[]): InlineK
 export const ideaListRow = (id: number): InlineButton[] => [
   button(`صُغها #${id}`, CB.formulate(id)),
   button('🗄 أرشف', CB.archiveIdea(id)),
+  button('❌ احذف', CB.deleteIdea(id)),
+];
+
+export const deleteIdeaConfirmRow = (id: number): InlineButton[] => [
+  button(`✅ احذف #${id} نهائياً`, CB.confirmDeleteIdea(id)),
+  button('↩️ تراجع', CB.keepIdea(id)),
 ];
 
 export const archivedIdeaRow = (id: number): InlineButton[] => [
@@ -231,7 +250,12 @@ export const archivedIdeaRow = (id: number): InlineButton[] => [
 /** يستبدل صف الفكرة في أزرار رسالة /ideas كما وصلت مع الضغطة، أو null إن لم يوجد. */
 export function replaceIdeaRow(kb: InlineKeyboard | undefined, ideaId: number, row: InlineButton[]): InlineKeyboard | null {
   if (!kb) return null;
-  const mine = new Set([CB.formulate(ideaId), CB.archiveIdea(ideaId), CB.unarchiveIdea(ideaId)]);
+  const mine = new Set([
+    CB.formulate(ideaId),
+    CB.archiveIdea(ideaId),
+    CB.unarchiveIdea(ideaId),
+    CB.confirmDeleteIdea(ideaId),
+  ]);
   let found = false;
   const rows = kb.inline_keyboard.map((r) => {
     if (!r.some((b) => mine.has(b.callback_data))) return r;

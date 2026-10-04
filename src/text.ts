@@ -151,6 +151,22 @@ export function readyDraftsAr(n: number): string {
   return `${n} مسودة جاهزة`;
 }
 
+/** «فكرة واحدة»، «فكرتان»، «4 أفكار»، «11 فكرة». */
+export function ideasAr(n: number): string {
+  if (n === 1) return 'فكرة واحدة';
+  if (n === 2) return 'فكرتان';
+  if (n >= 3 && n <= 10) return `${n} أفكار`;
+  return `${n} فكرة`;
+}
+
+/** «مسودة واحدة»، «مسودتان»، «4 مسودات»، «11 مسودة». */
+export function draftsAr(n: number): string {
+  if (n === 1) return 'مسودة واحدة';
+  if (n === 2) return 'مسودتان';
+  if (n >= 3 && n <= 10) return `${n} مسودات`;
+  return `${n} مسودة`;
+}
+
 /** «منشور واحد»، «منشوران»، «4 منشورات»، «11 منشوراً». */
 export function postsAr(n: number): string {
   if (n === 1) return 'منشور واحد';

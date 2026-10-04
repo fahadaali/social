@@ -86,7 +86,7 @@ test('scheduled: «عرض» shows change/cancel; «غيّر الموعد» hides
     await bot.press(`shw:${id}`);
     const preview = await bot.waitFor(() => sentStarting(bot, `📝 مسودة #${id}`), 10_000, 'preview');
     assert.match(preview.body.text, /🕒 مجدولة: /);
-    assert.deepEqual(labels(preview), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '📋 سكربت سناب']);
+    assert.deepEqual(labels(preview), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '❌ احذف', '📋 سكربت سناب']);
 
     await bot.press(`rsc:${id}`, { messageId: 500 });
     const options = await bot.waitFor(() => bot.tg('editMessageReplyMarkup').find((c) => c.body.message_id === 500), 5000, 'options');
@@ -117,7 +117,7 @@ test('scheduled: «عرض» shows change/cancel; «غيّر الموعد» hides
       'buttons moved to the result message',
     );
     assert.deepEqual({ ...row }, { status: 'scheduled', scheduled_at: sql(newAt), telegram_message_id: 600 });
-    assert.deepEqual(labels(done), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '📋 سكربت سناب']);
+    assert.deepEqual(labels(done), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '❌ احذف', '📋 سكربت سناب']);
   }));
 
 test('change and cancel are refused within 15 minutes of the scheduled time, before any SocialAPI call', () =>
@@ -245,7 +245,7 @@ test('«رجوع» from the time options restores the status buttons; «إلغا
     await bot.press(`bk:${scheduled}`, { messageId: 500 });
     await bot.waitFor(() => bot.tg('editMessageReplyMarkup').filter((c) => c.body.message_id === 500).length === 2, 5000, 'back');
     const back = bot.tg('editMessageReplyMarkup').filter((c) => c.body.message_id === 500).at(-1);
-    assert.deepEqual(labels(back), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '📋 سكربت سناب']);
+    assert.deepEqual(labels(back), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '❌ احذف', '📋 سكربت سناب']);
 
     const expected = [
       [scheduled, 'أُلغي. بقي الموعد كما هو.'],
@@ -401,7 +401,7 @@ test('outcome messages carry the buttons of the new status: scheduled → change
     const conf = await bot.waitFor(() => sentStarting(bot, 'تأكيد جدولة النشر'), 5000);
     await bot.press(dataOf(conf, 'oks:'), { messageId: 11 });
     const scheduled = await bot.waitFor(() => editedStarting(bot, 11, `🕒 جُدولت المسودة #${a}`), 10_000, 'scheduled');
-    assert.deepEqual(labels(scheduled), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '📋 سكربت سناب']);
+    assert.deepEqual(labels(scheduled), ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة', '❌ احذف', '📋 سكربت سناب']);
 
     const b = await seed(bot, { status: 'pending' });
     bot.mocks.createPost = () => ({ status: 207, json: partialPost('p_part') });
@@ -452,14 +452,14 @@ test('/ideas «أرشف» archives in place with an undo button; «تراجع» 
 
     await bot.press('arc:2', { messageId: 321, markup: list.body.reply_markup });
     const archived = await bot.waitFor(() => edits()[0], 5000, 'archived keyboard');
-    assert.deepEqual(rowsOf(archived), [['una:2'], ['fmt:1', 'arc:1']]);
+    assert.deepEqual(rowsOf(archived), [['una:2'], ['fmt:1', 'arc:1', 'di:1'], ['dbk:2']]);
     assert.equal(kbOf(archived)[0].text, '↩️ تراجع عن أرشفة #2');
     assert.equal((await bot.row('SELECT status FROM ideas WHERE id = 2')).status, 'archived');
     await bot.waitFor(() => bot.answers().some((a) => a.text === '🗄 أُرشفت الفكرة #2' && !a.show_alert), 5000);
 
     await bot.press('una:2', { messageId: 321, markup: archived.body.reply_markup });
     const restored = await bot.waitFor(() => edits()[1], 5000, 'restored keyboard');
-    assert.deepEqual(rowsOf(restored), [['fmt:2', 'arc:2'], ['fmt:1', 'arc:1']]);
+    assert.deepEqual(rowsOf(restored), [['fmt:2', 'arc:2', 'di:2'], ['fmt:1', 'arc:1', 'di:1'], ['dbk:2']]);
     assert.equal((await bot.row('SELECT status FROM ideas WHERE id = 2')).status, 'new');
 
     await bot.db.prepare("UPDATE ideas SET status = 'drafted' WHERE id = 1").run();

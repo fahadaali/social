@@ -1,7 +1,7 @@
 // أوامر المتابعة (SPEC §7): /queue و /usage و /pause و /resume.
 
 import type { Ctx } from './context.ts';
-import { deleteState, listDraftsByStatus, setState, STATE_KEYS, type Draft } from './db.ts';
+import { deleteState, listDraftsByStatus, pendingStats, setState, STATE_KEYS, type Draft } from './db.ts';
 import { isDryRun, monthlyPostLimit } from './env.ts';
 import { menuKeyboard } from './menu.ts';
 import { CB, versionLabel } from './preview.ts';
@@ -53,6 +53,10 @@ export async function showQueue(ctx: Ctx): Promise<void> {
   const buttons = shown.map((d) => button(`عرض #${d.id}`, CB.show(d.id)));
   const keyboard: InlineKeyboard = { inline_keyboard: [] };
   for (let i = 0; i < buttons.length; i += 3) keyboard.inline_keyboard.push(buttons.slice(i, i + 3));
+  if (pending.length) {
+    const all = await pendingStats(db);
+    keyboard.inline_keyboard.push([button(`🗑 احذف كل المعلّقة (${all.count})`, CB.deletePending(all.maxId))]);
+  }
   await sendMessage(ctx.env, ctx.chatId, sections.join('\n\n'), keyboard.inline_keyboard.length ? keyboard : undefined);
 }
 

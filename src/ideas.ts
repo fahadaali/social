@@ -4,6 +4,7 @@ import { claudeErrorMessage, claudeJson } from './claude.ts';
 import { PILLARS, PILLARS_MD } from './content.ts';
 import type { Ctx } from './context.ts';
 import {
+  bankStats,
   getIdea,
   insertIdea,
   listNewIdeas,
@@ -85,16 +86,27 @@ export async function reclassifyIdea(ctx: Ctx, ideaId: number, messageId: number
   await classifyAndReport(ctx, idea, { editMessageId: messageId });
 }
 
-/** /ideas: آخر 10 أفكار بحالة new، لكل فكرة زرّا «صُغها» و«أرشف». */
-export async function listIdeas(ctx: Ctx): Promise<void> {
-  const ideas = await listNewIdeas(ctx.env.DB, 10);
-  if (ideas.length === 0) {
-    await sendMessage(ctx.env, ctx.chatId, 'لا توجد أفكار جديدة في البنك. أرسل أي فكرة نصاً لأحفظها.');
-    return;
-  }
+export const EMPTY_BANK = 'لا توجد أفكار جديدة في البنك. أرسل أي فكرة نصاً لأحفظها.';
+
+/** نص /ideas وأزراره: آخر 10 أفكار بحالة new، لكل فكرة «صُغها» و«أرشف» و«احذف»، وزر حذف البنك كله. */
+export async function ideasView(db: D1Database): Promise<{ text: string; keyboard?: InlineKeyboard }> {
+  const ideas = await listNewIdeas(db, 10);
+  if (ideas.length === 0) return { text: EMPTY_BANK };
+  const bank = await bankStats(db);
   const lines = ideas.map((i) => `#${i.id} — ${i.pillar ?? 'غير مصنّف'}\n${truncate(i.text, 140)}`);
-  const keyboard: InlineKeyboard = { inline_keyboard: ideas.map((i) => ideaListRow(i.id)) };
-  await sendMessage(ctx.env, ctx.chatId, `💡 أحدث الأفكار الجديدة:\n\n${lines.join('\n\n')}`, keyboard);
+  const keyboard: InlineKeyboard = {
+    inline_keyboard: [
+      ...ideas.map((i) => ideaListRow(i.id)),
+      [button(`🗑 احذف كل أفكار البنك (${bank.count})`, CB.deleteBank(bank.maxId))],
+    ],
+  };
+  return { text: `💡 أحدث الأفكار الجديدة:\n\n${lines.join('\n\n')}`, keyboard };
+}
+
+/** /ideas */
+export async function listIdeas(ctx: Ctx): Promise<void> {
+  const view = await ideasView(ctx.env.DB);
+  await sendMessage(ctx.env, ctx.chatId, view.text, view.keyboard);
 }
 
 const IDEA_STATUS_AR: Record<IdeaStatus, string> = {

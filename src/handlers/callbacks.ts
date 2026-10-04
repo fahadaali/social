@@ -11,6 +11,17 @@ import {
   updateDraft,
   type Draft,
 } from '../db.ts';
+import {
+  askDeleteBank,
+  askDeleteDraft,
+  askDeleteIdea,
+  askDeletePending,
+  confirmDeleteBank,
+  confirmDeleteDraft,
+  confirmDeleteIdea,
+  confirmDeletePending,
+  keepIdea,
+} from '../deleting.ts';
 import { formulateIdea, regenerateDraft, resendPreview, reviseDraft, reviseNotesKey } from '../drafting.ts';
 import { PLATFORM_LABEL, type Platform } from '../env.ts';
 import { archiveIdea, listIdeas, reclassifyIdea, unarchiveIdea } from '../ideas.ts';
@@ -363,6 +374,61 @@ export async function handleCallback(ctx: Ctx, cq: TgCallbackQuery): Promise<voi
         if (!a || index === null) break;
         await answer();
         await pickSuggestion(ctx, a, index);
+        break;
+      }
+
+      // ----- الحذف النهائي (deleting.ts) -----
+      case 'dd': {
+        const d = await load(toInt(a));
+        if (!d || messageId === null) break;
+        const r = await askDeleteDraft(ctx, d, messageId);
+        await answer(r.text, r.alert);
+        break;
+      }
+      case 'ddo': {
+        const draftId = toInt(a);
+        const pfp = toFp(b);
+        if (draftId === null || pfp === null || messageId === null) break;
+        await answer();
+        const r = await confirmDeleteDraft(ctx, draftId, pfp, messageId);
+        if (r.text && r.alert) await sendMessage(env, ctx.chatId, r.text);
+        break;
+      }
+      case 'di':
+      case 'dio':
+      case 'dix': {
+        const ideaId = toInt(a);
+        if (ideaId === null) break;
+        const r =
+          action === 'di'
+            ? await askDeleteIdea(ctx, ideaId, cq.message)
+            : action === 'dio'
+              ? await confirmDeleteIdea(ctx, ideaId, cq.message)
+              : await keepIdea(ctx, ideaId, cq.message);
+        await answer(r.text, r.alert);
+        break;
+      }
+      case 'dbk':
+      case 'dpd': {
+        const maxId = toInt(a);
+        if (maxId === null) break;
+        await answer();
+        if (action === 'dbk') await askDeleteBank(ctx, maxId);
+        else await askDeletePending(ctx, maxId);
+        break;
+      }
+      case 'dbo':
+      case 'dpo': {
+        const maxId = toInt(a);
+        if (maxId === null || messageId === null) break;
+        await answer();
+        if (action === 'dbo') await confirmDeleteBank(ctx, maxId, messageId);
+        else await confirmDeletePending(ctx, maxId, messageId);
+        break;
+      }
+      case 'dlx': {
+        await answer('أُلغي');
+        if (messageId !== null) await editMessageText(env, ctx.chatId, messageId, 'أُلغي الحذف، ولم يُحذف شيء.');
         break;
       }
 

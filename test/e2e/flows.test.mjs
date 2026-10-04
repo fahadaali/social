@@ -94,7 +94,7 @@ test('acceptance 2: text idea → saved + classified → «صُغها الآن»
     assert.match(preview, /🖼 يُقترح تصميم: بطاقة تلخّص الخطوات الثلاث/);
     assert.ok(bot.tg('sendMessage').some((c) => c.body.text.startsWith('⏳ جاري الصياغة')), 'placeholder first');
     const labels = bot.lastKeyboard().map((b) => b.text);
-    for (const l of ['✅ انشر الآن', '🕒 جدول', '✏️ عدّل', '🔁 صياغة جديدة', '🖼 أرفق صورة', 'X ✓', 'LinkedIn ✓', '🗑 تجاهل']) {
+    for (const l of ['✅ انشر الآن', '🕒 جدول', '✏️ عدّل', '🔁 صياغة جديدة', '🖼 أرفق صورة', 'X ✓', 'LinkedIn ✓', '🗑 تجاهل', '❌ احذف']) {
       assert.ok(labels.includes(l), l);
     }
     const draft = await bot.row('SELECT * FROM drafts WHERE id = 1');
@@ -531,7 +531,7 @@ test('/ideas lists new ideas with «صُغها» and «أرشف» buttons', () =
     const msg = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('💡 أحدث الأفكار')), 5000);
     assert.deepEqual(
       msg.body.reply_markup.inline_keyboard.map((row) => row.map((b) => b.callback_data)),
-      [['fmt:2', 'arc:2'], ['fmt:1', 'arc:1']],
+      [['fmt:2', 'arc:2', 'di:2'], ['fmt:1', 'arc:1', 'di:1'], ['dbk:2']],
     );
   }));
 

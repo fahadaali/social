@@ -190,11 +190,26 @@ export async function confirmCancel(ctx: Ctx, draftId: number, pfp: string, conf
     await say(refusal);
     return;
   }
+  const result = await cancelRemoteSchedule(ctx, d, say);
+  if (!result) return;
+  await unscheduleDraft(env.DB, d.id, d.socialapi_post_id ?? '');
+  const headline =
+    result === 'gone' ? 'ℹ️ المنشور لم يعد موجوداً في SocialAPI، فلن يُنشر.' : `🚫 أُلغيت جدولة المسودة #${d.id}، ولن يُنشر شيء.`;
+  await showWithButtons(ctx, d.id, confirmMessageId, `${headline}\nعادت المسودة #${d.id} معلّقة: يمكنك نشرها أو جدولتها من جديد.`);
+}
+
+/**
+ * يحذف المنشور المجدول من SocialAPI ويتأكد من حذفه، دون تغيير السجل المحلي.
+ * يعيد 'cancelled' أو 'gone' (لم يعد موجوداً) عند النجاح، و null عند التعذّر بعد إبلاغ المالك بالسبب عبر say.
+ * يستعمله إلغاء الجدولة وحذف المسودة المجدولة (deleting.ts).
+ */
+export async function cancelRemoteSchedule(
+  ctx: Ctx,
+  d: Draft,
+  say: (text: string) => Promise<unknown>,
+): Promise<'cancelled' | 'gone' | null> {
+  const { env } = ctx;
   const postId = d.socialapi_post_id ?? '';
-  const done = async (headline: string) => {
-    await unscheduleDraft(env.DB, d.id, postId);
-    await showWithButtons(ctx, d.id, confirmMessageId, `${headline}\nعادت المسودة #${d.id} معلّقة: يمكنك نشرها أو جدولتها من جديد.`);
-  };
 
   // 1) التحقق من SocialAPI نفسه قبل الحذف مباشرة، لا من السجل المحلي وحده
   await say('⏳ أتحقق من حالة المنشور في SocialAPI…');
@@ -202,12 +217,9 @@ export async function confirmCancel(ctx: Ctx, draftId: number, pfp: string, conf
   try {
     remote = await getPost(env, postId);
   } catch (err) {
-    if (isNotFound(err)) {
-      await done('ℹ️ المنشور لم يعد موجوداً في SocialAPI، فلن يُنشر.');
-      return;
-    }
+    if (isNotFound(err)) return 'gone';
     await say(`لم يُلغَ شيء: تعذّر التحقق من حالة المنشور. ${socialApiErrorMessage(err)}`);
-    return;
+    return null;
   }
   const remoteRefusal = cancelRefusal(remote);
   if (remoteRefusal) {
@@ -219,7 +231,7 @@ export async function confirmCancel(ctx: Ctx, draftId: number, pfp: string, conf
       const at = validDate(remote.scheduled_at);
       if (at) await setScheduledAt(env.DB, d.id, postId, toSqlUtc(at));
     }
-    return;
+    return null;
   }
 
   // 2) الحذف، ثم التأكد منه: المنشور المحذوف يرد 404
@@ -235,17 +247,17 @@ export async function confirmCancel(ctx: Ctx, draftId: number, pfp: string, conf
   } catch (err) {
     if (isNotFound(err)) {
       console.log(JSON.stringify({ evt: 'schedule_cancelled', draft: d.id }));
-      await done(`🚫 أُلغيت جدولة المسودة #${d.id}، ولن يُنشر شيء.`);
-      return;
+      return 'cancelled';
     }
     await say('⚠️ لم أتمكن من التأكد من إلغاء الجدولة. راجع المنشور في لوحة SocialAPI.');
-    return;
+    return null;
   }
   // رسائل الأخطاء جمل تامة تنتهي بنقطة
   const reason = deleteError ? socialApiErrorMessage(deleteError).replace(/\.$/, '') : 'لم يؤكد SocialAPI الحذف';
   console.error(JSON.stringify({ evt: 'cancel_not_confirmed', draft: d.id, status: after.status }));
   await say(`⚠️ لم تُلغَ الجدولة: ${reason}. حالة المنشور الآن «${statusAr(after.status)}».`);
   if (after.status !== 'scheduled') await applyOutcome(ctx, d.id, after);
+  return null;
 }
 
 // ---------- إعادة محاولة المنشور الجزئي (رصيد واحد) ----------

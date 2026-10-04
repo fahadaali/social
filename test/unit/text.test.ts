@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import {
   checkDraftLimits,
   countWords,
+  draftsAr,
+  ideasAr,
   parseDraftContent,
   readyDraftsAr,
   ShapeError,
@@ -94,4 +96,9 @@ test('readyDraftsAr agrees in number', () => {
   assert.equal(readyDraftsAr(3), '3 مسودات جاهزة');
   assert.equal(readyDraftsAr(10), '10 مسودات جاهزة');
   assert.equal(readyDraftsAr(11), '11 مسودة جاهزة');
+});
+
+test('Arabic counts for ideas and drafts follow number agreement', () => {
+  assert.deepEqual([1, 2, 3, 10, 11].map(ideasAr), ['فكرة واحدة', 'فكرتان', '3 أفكار', '10 أفكار', '11 فكرة']);
+  assert.deepEqual([1, 2, 3, 10, 11].map(draftsAr), ['مسودة واحدة', 'مسودتان', '3 مسودات', '10 مسودات', '11 مسودة']);
 });

@@ -420,3 +420,100 @@ export async function allIdeas(db: D1Database): Promise<Idea[]> {
 export async function allDrafts(db: D1Database): Promise<Draft[]> {
   return (await db.prepare('SELECT * FROM drafts ORDER BY id').all<DraftRow>()).results.map(rowToDraft);
 }
+
+// ---------- الحذف النهائي (deleting.ts) ----------
+
+/** مسودات يمنع وجودها حذف فكرتها: لها منشور في SocialAPI أو نُشرت. */
+export const PROTECTED_DRAFT_STATUSES: readonly DraftStatus[] = ['scheduled', 'publishing', 'published', 'partial'];
+const PROTECTED_SQL = PROTECTED_DRAFT_STATUSES.map((s) => `'${s}'`).join(', ');
+
+/**
+ * يحذف مسودة معلّقة أو فشل نشرها، ويعيد فكرتها إلى البنك إن لم تبقَ لها مسودة أخرى.
+ * يعيد معرّف الفكرة التي عادت إلى البنك، أو null؛ و false إن لم تُحذف (تغيّرت حالتها).
+ */
+export async function deleteDraft(db: D1Database, id: number): Promise<{ restoredIdea: number | null } | false> {
+  const row = await db
+    .prepare(`DELETE FROM drafts WHERE id = ? AND status IN ('pending', 'failed') RETURNING idea_id`)
+    .bind(id)
+    .first<{ idea_id: number | null }>();
+  if (!row) return false;
+  if (row.idea_id === null) return { restoredIdea: null };
+  const r = await db
+    .prepare(
+      `UPDATE ideas SET status = 'new' WHERE id = ? AND status = 'drafted'
+       AND NOT EXISTS (SELECT 1 FROM drafts WHERE drafts.idea_id = ideas.id)`,
+    )
+    .bind(row.idea_id)
+    .run();
+  return { restoredIdea: (r.meta.changes ?? 0) > 0 ? row.idea_id : null };
+}
+
+export type IdeaDeletion = { deleted: true; drafts: number } | { deleted: false; reason: 'missing' | 'protected' };
+
+/** يحذف الفكرة ومسوداتها غير المنشورة، ما لم تكن لها مسودة مجدولة أو منشورة. */
+export async function deleteIdea(db: D1Database, id: number): Promise<IdeaDeletion> {
+  const idea = await getIdea(db, id);
+  if (!idea) return { deleted: false, reason: 'missing' };
+  const guard = `NOT EXISTS (SELECT 1 FROM drafts WHERE idea_id = ? AND status IN (${PROTECTED_SQL}))`;
+  const [drafts, ideas] = await db.batch([
+    db.prepare(`DELETE FROM drafts WHERE idea_id = ? AND ${guard}`).bind(id, id),
+    db.prepare(`DELETE FROM ideas WHERE id = ? AND ${guard}`).bind(id, id),
+  ]);
+  if ((ideas?.meta.changes ?? 0) === 0) return { deleted: false, reason: 'protected' };
+  return { deleted: true, drafts: drafts?.meta.changes ?? 0 };
+}
+
+/** عدد أفكار البنك (new) وأكبر معرّف فيها، لزر «احذف كل أفكار البنك». */
+export async function bankStats(db: D1Database, maxId = Number.MAX_SAFE_INTEGER): Promise<{ count: number; maxId: number }> {
+  const r = await db
+    .prepare(`SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM ideas WHERE status = 'new' AND id <= ?`)
+    .bind(maxId)
+    .first<{ count: number; maxId: number }>();
+  return { count: r?.count ?? 0, maxId: r?.maxId ?? 0 };
+}
+
+/**
+ * يحذف أفكار البنك حتى maxId (ما عُرض للمالك وقت الطلب) ومسوداتها غير المنشورة.
+ * تُستثنى فكرة لها مسودة مجدولة أو منشورة. يعيد عدد المحذوف والمستثنى.
+ */
+export async function deleteBank(db: D1Database, maxId: number): Promise<{ deleted: number; skipped: number }> {
+  const target = `SELECT id FROM ideas WHERE status = 'new' AND id <= ?
+    AND NOT EXISTS (SELECT 1 FROM drafts WHERE drafts.idea_id = ideas.id AND drafts.status IN (${PROTECTED_SQL}))`;
+  const [, ideas] = await db.batch([
+    db.prepare(`DELETE FROM drafts WHERE idea_id IN (${target})`).bind(maxId),
+    db.prepare(`DELETE FROM ideas WHERE id IN (${target})`).bind(maxId),
+  ]);
+  const left = await db.prepare(`SELECT COUNT(*) AS n FROM ideas WHERE status = 'new' AND id <= ?`).bind(maxId).first<{ n: number }>();
+  return { deleted: ideas?.meta.changes ?? 0, skipped: left?.n ?? 0 };
+}
+
+/** عدد المسودات المعلّقة (معلّقة أو فشل نشرها) وأكبر معرّف فيها، لزر «احذف كل المعلّقة». */
+export async function pendingStats(db: D1Database, maxId = Number.MAX_SAFE_INTEGER): Promise<{ count: number; maxId: number }> {
+  const r = await db
+    .prepare(`SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS maxId FROM drafts WHERE status IN ('pending', 'failed') AND id <= ?`)
+    .bind(maxId)
+    .first<{ count: number; maxId: number }>();
+  return { count: r?.count ?? 0, maxId: r?.maxId ?? 0 };
+}
+
+/** يحذف المسودات المعلّقة حتى maxId، ويعيد أفكارها التي لم تبقَ لها مسودة إلى البنك. */
+export async function deletePendingDrafts(db: D1Database, maxId: number): Promise<{ deleted: number; restored: number }> {
+  const ideaIds = await db
+    .prepare(`SELECT DISTINCT idea_id FROM drafts WHERE status IN ('pending', 'failed') AND id <= ? AND idea_id IS NOT NULL`)
+    .bind(maxId)
+    .all<{ idea_id: number }>();
+  const del = await db.prepare(`DELETE FROM drafts WHERE status IN ('pending', 'failed') AND id <= ?`).bind(maxId).run();
+  let restored = 0;
+  const ids = ideaIds.results.map((r) => r.idea_id);
+  if (ids.length) {
+    const r = await db
+      .prepare(
+        `UPDATE ideas SET status = 'new' WHERE status = 'drafted' AND id IN (${ids.map(() => '?').join(', ')})
+         AND NOT EXISTS (SELECT 1 FROM drafts WHERE drafts.idea_id = ideas.id)`,
+      )
+      .bind(...ids)
+      .run();
+    restored = r.meta.changes ?? 0;
+  }
+  return { deleted: del.meta.changes ?? 0, restored };
+}

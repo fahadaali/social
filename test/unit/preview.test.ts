@@ -4,6 +4,7 @@ import type { Draft } from '../../src/db.ts';
 import {
   archivedIdeaRow,
   CB,
+  deleteIdeaConfirmRow,
   draftKeyboard,
   ideaListRow,
   previewKeyboard,
@@ -94,7 +95,11 @@ test('all callback_data fit in 64 bytes even with large ids', () => {
 test('previewKeyboard gives each status its own buttons; Snap copy everywhere except rejected', () => {
   const texts = (d: Draft) => previewKeyboard(d).inline_keyboard.map((r) => r.map((b) => b.text));
   const withPost = { socialapi_post_id: 'p_1' };
-  assert.deepEqual(texts(makeDraft({ status: 'scheduled', ...withPost })), [['🕒 غيّر الموعد', '🚫 ألغِ الجدولة'], ['📋 سكربت سناب']]);
+  assert.deepEqual(texts(makeDraft({ status: 'scheduled', ...withPost })), [
+    ['🕒 غيّر الموعد', '🚫 ألغِ الجدولة'],
+    ['❌ احذف'],
+    ['📋 سكربت سناب'],
+  ]);
   assert.deepEqual(texts(makeDraft({ status: 'partial', ...withPost })), [['🔁 أعد محاولة ما فشل'], ['📋 سكربت سناب']]);
   assert.deepEqual(texts(makeDraft({ status: 'publishing', ...withPost })), [['🔄 تحقق من الحالة'], ['📋 سكربت سناب']]);
   assert.deepEqual(texts(makeDraft({ status: 'published', ...withPost })), [['📋 سكربت سناب']]);
@@ -107,6 +112,7 @@ test('previewKeyboard gives each status its own buttons; Snap copy everywhere ex
   assert.deepEqual(pending[2], ['🖼 أرفق صورة', '📋 سكربت سناب']);
   assert.deepEqual(previewKeyboard(makeDraft()), draftKeyboard(makeDraft()));
   assert.deepEqual(texts(makeDraft({ snap_script: [] }))[2], ['🖼 أرفق صورة']);
+  assert.deepEqual(pending.at(-1), ['🗑 تجاهل', '❌ احذف']);
 });
 
 test('reschedule options hide the current slot and end with «رجوع»', () => {
@@ -152,7 +158,11 @@ test('Snap copy: each frame is a pre block at exact UTF-16 offsets; long scripts
 test('/ideas rows: «أرشف» ⇄ «تراجع» replace only that idea\'s row', () => {
   const kb = { inline_keyboard: [ideaListRow(2), ideaListRow(1)] };
   const archived = replaceIdeaRow(kb, 2, archivedIdeaRow(2));
-  assert.deepEqual(archived?.inline_keyboard.map((r) => r.map((b) => b.callback_data)), [['una:2'], ['fmt:1', 'arc:1']]);
+  assert.deepEqual(archived?.inline_keyboard.map((r) => r.map((b) => b.callback_data)), [['una:2'], ['fmt:1', 'arc:1', 'di:1']]);
+  // تأكيد الحذف يحل محل صف الفكرة نفسها، و«تراجع» يعيده
+  const asking = replaceIdeaRow(kb, 1, deleteIdeaConfirmRow(1));
+  assert.deepEqual(asking?.inline_keyboard.map((r) => r.map((b) => b.callback_data)), [['fmt:2', 'arc:2', 'di:2'], ['dio:1', 'dix:1']]);
+  assert.deepEqual(replaceIdeaRow(asking ?? undefined, 1, ideaListRow(1)), kb);
   const back = replaceIdeaRow(archived ?? undefined, 2, ideaListRow(2));
   assert.deepEqual(back, kb);
   assert.equal(replaceIdeaRow(kb, 9, archivedIdeaRow(9)), null);

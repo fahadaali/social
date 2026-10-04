@@ -73,7 +73,7 @@ test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» 
     assert.match(msg.body.text, /⏳ قيد النشر:\n• #4/);
     assert.ok(!msg.body.text.includes('#5'), 'published drafts are not queued');
     // بترتيب الأقسام: المجدولة ثم المعلّقة ثم قيد النشر
-    assert.deepEqual(msg.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ['shw:3', 'shw:2', 'shw:1', 'shw:4']);
+    assert.deepEqual(msg.body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ['shw:3', 'shw:2', 'shw:1', 'shw:4', 'dpd:2']);
 
     await bot.press(`shw:${pending}`);
     const preview = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📝 مسودة #1')), 10_000, 'preview');
