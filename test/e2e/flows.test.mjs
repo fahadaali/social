@@ -2,7 +2,9 @@
 // تغطي معايير قبول المرحلة 1 (SPEC §12) بقدر ما يمكن دون حسابات حقيقية.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { parsePillars } from '../../src/prompts/shared.ts';
 import { anthropicMessage, draftOutput, OWNER, startBot, STRANGER } from './harness.mjs';
 
 async function withBot(opts, fn) {
@@ -70,13 +72,16 @@ test('duplicate update_id is processed once', () =>
 
 // ---------- الأفكار والصياغة — معيار القبول 2 ----------
 
-test('/start explains the bot and warns about DRY_RUN and unfilled config', () =>
+test('/start explains the bot and warns about DRY_RUN and only the config files still unfilled', () =>
   withBot({}, async (bot) => {
     await bot.sendText('/start');
     const msg = await bot.waitFor(() => bot.lastTg('sendMessage'), 5000, 'welcome');
     assert.match(msg.body.text, /لا يُنشر ولا يُجدول أي شيء إلا بعد ضغطك «تأكيد»/);
     assert.match(msg.body.text, /وضع التجربة مفعّل/);
-    assert.match(msg.body.text, /config\/pillars\.md/);
+    // التحذير يتبع حال الملفات الفعلية: دليل الأسلوب معبّأ، والمحاور بحسب ما فيها
+    assert.doesNotMatch(msg.body.text, /config\/voice\.md/);
+    const pillarsEmpty = parsePillars(readFileSync(new URL('../../config/pillars.md', import.meta.url), 'utf8')).length === 0;
+    assert.equal(/config\/pillars\.md/.test(msg.body.text), pillarsEmpty);
   }));
 
 test('acceptance 2: text idea → saved + classified → «صُغها الآن» → full draft preview with buttons', () =>

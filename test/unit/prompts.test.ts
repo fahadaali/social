@@ -14,10 +14,12 @@ import {
 
 const read = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
-test('voice guide is filled by the owner; pillars template contains only instructions', () => {
+test('config files: voice guide is filled; pillars parse from headings only, never from the template comment', () => {
   assert.equal(isEffectivelyEmpty(read('config/voice.md')), false);
-  assert.equal(isEffectivelyEmpty(read('config/pillars.md')), true);
-  assert.deepEqual(parsePillars(read('config/pillars.md')), []);
+  const pillars = read('config/pillars.md');
+  const names = parsePillars(pillars);
+  assert.ok(!names.includes('اسم المحور'), 'the example inside the template comment is not a pillar');
+  assert.equal(names.length === 0, isEffectivelyEmpty(pillars), 'pillar names exist exactly when the file is filled');
 });
 
 test('parsePillars reads level-2 headings, strips descriptions after a colon', () => {
