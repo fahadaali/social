@@ -27,6 +27,8 @@ export interface CreatePostRequest {
   targets: TargetRequest[];
   publish_now?: boolean;
   scheduled_at?: string;
+  /** يتجاوز تحقق SocialAPI عند الإنشاء؛ لا يُستعمل إلا مع صورة X المرفوعة مباشرة (publishing.ts). */
+  skip_validation?: boolean;
 }
 
 export interface ValidatePostRequest {

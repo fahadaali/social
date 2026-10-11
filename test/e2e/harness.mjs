@@ -290,6 +290,17 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
           });
         }
         if (mocks.validateFn) return json(200, mocks.validateFn(call.body));
+        // كما ردّت SocialAPI فعلاً (2026-10-11) على صورة X مرفوعة مباشرة (platform_attachment_id)
+        const xAttachment = (call.body.targets ?? []).some(
+          (t) => t.account_id === 'acc_x' && (t.media ?? []).some((m) => m.source_type === 'platform_attachment_id'),
+        );
+        if (xAttachment) {
+          return json(200, {
+            valid: false,
+            errors: [{ platform: 'twitter', field: 'media', message: 'media at index 0 has type "", which X does not accept' }],
+            warnings: [],
+          });
+        }
         return json(200, mocks.validate);
       }
       if (p === '/v1/media/upload' && request.method === 'POST') {

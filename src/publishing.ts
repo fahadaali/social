@@ -169,7 +169,12 @@ const isXMediaIssue = (i: ValidationIssue): boolean =>
 
 /**
  * يبني الطلب ويتحقق منه. إن رفض التحقق media_id الاحتياطي على هدف X (وهو مجرد تمهيد لدعم مستقبلي)
- * يُعاد البناء بدونه بدل أن يمنع النشر. أما معرّف X المرفوع فعلاً فرفضه يُعرض خطأً كما هو.
+ * يُعاد البناء بدونه بدل أن يمنع النشر.
+ *
+ * مع صورة X المرفوعة مباشرة: مدقق SocialAPI يرفض platform_attachment_id على X دائماً
+ * («media at index 0 has type ""») لأنه يبحث عن نوع MIME لا يعرفه لوسائط لم تمر به (2026-10-11، NOTES 2.2).
+ * لذلك يُتحقق من الطلب نفسه بلا صورة X (النص والثريد ولينكدن)، ثم يُنشأ بالصورة مع skip_validation،
+ * بقرار المالك. التجاوز لا يحدث إلا حين يكون الفرق الوحيد عن الطلب المتحقق منه هو صورة X.
  */
 async function buildAndValidate(
   env: Env,
@@ -178,6 +183,11 @@ async function buildAndValidate(
   image: XImageOptions,
 ): Promise<{ post: CreatePostRequest; v: ValidationResult }> {
   const scheduledAt = mode.kind === 'schedule' ? toRfc3339(mode.at) : undefined;
+  if (image.xAttachmentId) {
+    const withoutXImage = buildPostRequest(env, d, apiMode(env, mode), { xFallbackMedia: false });
+    const checked = await validatePost(env, buildValidateRequest(withoutXImage, scheduledAt));
+    return { post: { ...buildPostRequest(env, d, apiMode(env, mode), image), skip_validation: true }, v: checked };
+  }
   let post = buildPostRequest(env, d, apiMode(env, mode), image);
   let v = await validatePost(env, buildValidateRequest(post, scheduledAt));
   const invalid = !v.valid || v.errors.length > 0;
