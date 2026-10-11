@@ -120,7 +120,7 @@ export function statusLine(d: Draft): string | null {
 function footerSection(d: Draft): string | null {
   const lines: string[] = [];
   if (d.media_id) {
-    lines.push('📎 صورة مرفقة — تُنشر مع لينكدن فقط (X لا يدعم الصور عبر SocialAPI حالياً)');
+    lines.push('📎 صورة مرفقة — تُنشر مع لينكدن، ومع التغريدة الأولى في X متى أمكن (تبيّنه رسالة التأكيد)');
   } else if (d.needs_visual) {
     const brief = d.visual_brief ? `: ${d.visual_brief}` : '';
     lines.push(`🖼 يُقترح تصميم${brief} (صمّمه في Claude Design وأرسله هنا)`);

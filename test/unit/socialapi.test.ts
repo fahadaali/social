@@ -52,10 +52,23 @@ test('publish now / schedule modes', () => {
   assert.equal('publish_now' in at, false);
 });
 
-test('image goes to the LinkedIn target only', () => {
-  const p = buildPostRequest(env, { ...draft, media_id: 'm1' }, { kind: 'now' });
-  assert.equal(p.targets[0]?.media, undefined);
+test('image: LinkedIn gets media_id; X first tweet gets the X attachment id, never the thread', () => {
+  const p = buildPostRequest(env, { ...draft, media_id: 'm1' }, { kind: 'now' }, { xAttachmentId: '1880028106020515840' });
+  assert.deepEqual(p.targets[0]?.media, [{ source_type: 'platform_attachment_id', source: '1880028106020515840', type: 'image' }]);
+  assert.deepEqual(p.targets[0]?.platform_data?.thread, [
+    { text: 'الثانية', media_ids: [] },
+    { text: 'الثالثة', media_ids: [] },
+  ]);
   assert.deepEqual(p.targets[1]?.media, [{ source_type: 'media_id', source: 'm1' }]);
+});
+
+test('image without an X upload: X first tweet carries media_id as a fallback, unless disabled', () => {
+  const p = buildPostRequest(env, { ...draft, media_id: 'm1' }, { kind: 'now' });
+  assert.deepEqual(p.targets[0]?.media, [{ source_type: 'media_id', source: 'm1' }]);
+  const off = buildPostRequest(env, { ...draft, media_id: 'm1' }, { kind: 'now' }, { xFallbackMedia: false });
+  assert.equal(off.targets[0]?.media, undefined);
+  assert.deepEqual(off.targets[1]?.media, [{ source_type: 'media_id', source: 'm1' }]);
+  assert.equal(buildPostRequest(env, draft, { kind: 'now' }).targets[0]?.media, undefined, 'no image → no media');
 });
 
 test('single tweet has no thread; LinkedIn-only post uses LinkedIn text', () => {

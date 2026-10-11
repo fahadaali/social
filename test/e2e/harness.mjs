@@ -173,6 +173,8 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
     verify: { status: 200, json: { media_id: 'med_big', status: 'ready' } },
     storage: { status: 200, json: { used_bytes: 10485760, limit_bytes: 104857600, count: 3 } },
     deleteMedia: 204,
+    // رفع الصورة إلى X مباشرة (POST api.x.com/2/media/upload)
+    xUpload: { status: 200, json: { data: { id: '1880028106020515840', media_key: '3_1880028106020515840', size: 6, expires_after_secs: 86400 } } },
     // (inputs) => رد النموذج، أو { __error: 'رسالة' } لرمي خطأ
     ai: null,
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
@@ -211,6 +213,9 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
     calls.push(call);
 
     if (url.hostname === 'storage.mock') return new Response(null, { status: mocks.storagePut });
+    if (url.hostname === 'api.x.com' && url.pathname === '/2/media/upload' && request.method === 'POST') {
+      return json(mocks.xUpload.status, mocks.xUpload.json);
+    }
 
     if (url.hostname === 'api.telegram.org') {
       if (url.pathname.startsWith('/file/')) return new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]));
@@ -284,6 +289,7 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
             warnings: [],
           });
         }
+        if (mocks.validateFn) return json(200, mocks.validateFn(call.body));
         return json(200, mocks.validate);
       }
       if (p === '/v1/media/upload' && request.method === 'POST') {

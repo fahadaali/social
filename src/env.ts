@@ -11,6 +11,11 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   ANTHROPIC_API_KEY: string;
   SOCIALAPI_KEY: string;
+  /** اختيارية معاً: مفاتيح OAuth 1.0a لتطبيق X (BYOK) لرفع الصورة إلى X مباشرة (x.ts). */
+  X_API_KEY?: string;
+  X_API_SECRET?: string;
+  X_ACCESS_TOKEN?: string;
+  X_ACCESS_TOKEN_SECRET?: string;
 
   // متغيرات تُضبط من لوحة Cloudflare (قد تغيب حتى تُضبط، فتُقرأ بأمان أدناه)
   ALLOWED_TELEGRAM_USER_ID?: string;

@@ -359,6 +359,17 @@ export interface PublishableDraft {
 
 export type PublishMode = { kind: 'draft' } | { kind: 'now' } | { kind: 'schedule'; at: string };
 
+/**
+ * صورة التغريدة الأولى في X:
+ * - xAttachmentId: معرّف وسائط رُفع إلى X مباشرة (x.ts) فيُرسل platform_attachment_id، وهو المسار الذي يعمل اليوم.
+ * - وإلا يُرسل media_id نفسه احتياطاً (xFallbackMedia، الافتراض true): موصل X في SocialAPI يتجاهله حالياً،
+ *   وتظهر الصورة تلقائياً متى أضافت SocialAPI دعم وسائط X.
+ */
+export interface XImageOptions {
+  xAttachmentId?: string;
+  xFallbackMedia?: boolean;
+}
+
 export class ConfigError extends Error {}
 
 /**
@@ -366,11 +377,11 @@ export class ConfigError extends Error {}
  * - X: النص = التغريدة الأولى، وبقية الثريد في platform_data.thread لهدف X وحده
  *   (موثّق في صفحة موصل X). هذا يُبقي الثريد خارج هدف لينكدن فلا يلزم منشور ثانٍ — انظر NOTES.md.
  *   كل عنصر كائن {text, media_ids} كما تشترط SocialAPI في رسالة التحقق، لا نص مجرد كما في التوثيق المنشور.
- * - LinkedIn: النص عبر تجاوز الهدف، والصورة (إن وجدت) على هدف لينكدن فقط لأن موصل X
- *   لا يدعم الوسائط حالياً ويتجاهلها — انظر NOTES.md.
+ *   الصورة (إن وجدت) على التغريدة الأولى وحدها (هدف X نفسه)، لا على عناصر الثريد — انظر XImageOptions.
+ * - LinkedIn: النص عبر تجاوز الهدف، والصورة (إن وجدت) بـ media_id — انظر NOTES.md القسم 2.2.
  * بدون publish_now أو scheduled_at يُحفظ المنشور مسودة (لا تستهلك رصيداً)، وهذا وضع DRY_RUN.
  */
-export function buildPostRequest(env: Env, draft: PublishableDraft, mode: PublishMode): CreatePostRequest {
+export function buildPostRequest(env: Env, draft: PublishableDraft, mode: PublishMode, image: XImageOptions = {}): CreatePostRequest {
   const targets: TargetRequest[] = [];
   for (const platform of draft.platforms) {
     const id = accountId(env, platform);
@@ -381,9 +392,15 @@ export function buildPostRequest(env: Env, draft: PublishableDraft, mode: Publis
     }
     if (platform === 'x') {
       const [first, ...rest] = draft.x_segments;
+      const media: MediaInput[] | null = image.xAttachmentId
+        ? [{ source_type: 'platform_attachment_id', source: image.xAttachmentId, type: 'image' }]
+        : draft.media_id && image.xFallbackMedia !== false
+          ? [{ source_type: 'media_id', source: draft.media_id }]
+          : null;
       targets.push({
         account_id: id,
         text: first ?? '',
+        ...(media ? { media } : {}),
         ...(rest.length ? { platform_data: { thread: rest.map((t) => ({ text: t, media_ids: [] })) } } : {}),
       });
     } else {

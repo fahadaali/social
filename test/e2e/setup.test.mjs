@@ -15,7 +15,7 @@ async function withBot(opts, fn) {
   }
 }
 
-const ALL = ['0001_init.sql', '0002_draft_notes.sql'];
+const ALL = ['0001_init.sql', '0002_draft_notes.sql', '0003_draft_image_source.sql'];
 const DERIVED = createHmac('sha256', BOT_TOKEN).update('social-bot:telegram-webhook-secret').digest('base64url');
 
 const applied = async (bot) =>
@@ -61,6 +61,7 @@ test('only the missing migrations are applied, and existing rows stay', () =>
     await replyTo(bot, '/start', 'أهلاً بك');
     assert.deepEqual(await applied(bot), ALL);
     assert.ok((await columns(bot, 'drafts')).includes('notes'));
+    assert.ok((await columns(bot, 'drafts')).includes('image_file_id'));
     assert.equal((await bot.row('SELECT text FROM ideas')).text, 'فكرة قديمة');
   }));
 
@@ -68,7 +69,7 @@ test('a database migrated by wrangler is left as it is', () =>
   withBot({}, async (bot) => {
     await replyTo(bot, '/start', 'أهلاً بك');
     assert.deepEqual(await applied(bot), ALL);
-    assert.equal((await bot.row('SELECT COUNT(*) AS n FROM d1_migrations')).n, 2);
+    assert.equal((await bot.row('SELECT COUNT(*) AS n FROM d1_migrations')).n, ALL.length);
   }));
 
 test('two updates at once on a fresh database both work', () =>
