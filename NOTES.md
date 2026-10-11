@@ -21,6 +21,8 @@
 | الإنشاء | `POST /posts` | `targets[].{account_id, text, media, platform_data}`، `publish_now`، `scheduled_at`. الردود: 201 و207 (جزئي سريع) و422 (فشل كل الأهداف سريعاً مع كائن المنشور) |
 | الحالة | `GET /posts/{pid}` | `status`، و`scheduled_at`، و`targets[].{platform, status, permalink, error}` |
 | رفع الوسائط | `POST /media/upload` | `multipart/form-data` بالحقل `file` (حتى 50MB)، ويعيد `media_id` جاهزاً |
+| رفع الوسائط (بديل) | `GET /media/upload-url` ← `PUT` ← `POST /media/{id}/verify` | مسار الرابط الموقّع، بلا حد حجم من الـ API. يُستعمل تلقائياً إن رُدّ الرفع من الخادم بـ 413 بلا رمز `billing.storage_quota` (ظهر ذلك فعلاً في 2026-10-11 بصورة: `http.413` بلا غلاف أخطاء، أي رفضته البوابة قبل الـ API) |
+| مساحة الوسائط | `GET /media/storage` | `used_bytes` و`limit_bytes` (‎-1 غير محدود) و`count`؛ تُعرض في رسالة فشل الإرفاق بعد أي 413 |
 | تغيير الموعد | `PATCH /posts/{pid}` | `scheduled_at` فقط. يقبله للحالات `draft` و`scheduled` و`failed`، ويرد 409 إن بدأ النشر |
 | إلغاء الجدولة | `DELETE /posts/{pid}` | يلغي المجدول، **لكنه يحذف المنشور المنشور فعلاً من المنصات**. بعد الحذف يرد `GET` بـ 404 |
 | إعادة المحاولة | `POST /posts/{pid}/retry` | للحالتين `partial` و`failed`. الرفض: 400 `post.no_retryable_deliveries` و409 `post.state_invalid` و429 |

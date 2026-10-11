@@ -485,6 +485,42 @@ test('image sent as a file (document) keeps its type', () =>
     assert.deepEqual(bot.social('POST', '/v1/media/upload')[0].form.file, { name: 'draft-1.png', type: 'image/png', size: 6 });
   }));
 
+test('413 from the gateway on server-side upload → falls back to the presigned URL path', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.upload = { status: 413, html: '<html><body>413 Request Entity Too Large</body></html>' };
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto({ asDocument: true });
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة بالمسودة #1')), 10_000, 'attached');
+    const [uploadUrl] = bot.social('GET', '/v1/media/upload-url');
+    const q = new URL(uploadUrl.url).searchParams;
+    assert.deepEqual([q.get('media_type'), q.get('filename')], ['image/png', 'draft-1.png']);
+    const put = bot.calls.find((c) => c.host === 'storage.mock');
+    assert.equal(put.method, 'PUT');
+    assert.equal(put.headers['content-type'], 'image/png');
+    assert.equal(put.size, 6);
+    assert.equal(put.headers.authorization, undefined, 'SocialAPI key never sent to storage');
+    assert.equal(bot.social('POST', '/v1/media/med_big/verify').length, 1);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_big');
+  }));
+
+test('413 storage quota → no fallback; failure message shows media storage usage', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.upload = { status: 413, json: { error: { code: 'billing.storage_quota', message: 'Storage quota exceeded' } } };
+    bot.mocks.storage = { status: 200, json: { used_bytes: 104857600, limit_bytes: 104857600, count: 40 } };
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const fail = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('❌ لم تُرفق الصورة')), 10_000, 'failed');
+    assert.match(fail.body.text, /امتلأت مساحة الوسائط/);
+    assert.match(fail.body.text, /100\.0 من 100\.0MB \(40 ملف\)/);
+    assert.match(fail.body.text, /احذف وسائط قديمة/);
+    assert.equal(bot.social('GET', '/v1/media/upload-url').length, 0);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, null);
+  }));
+
 test('a photo without awaiting_image becomes a photo idea from its caption; no caption → asks for one', () =>
   withBot({}, async (bot) => {
     await bot.sendPhoto({ caption: 'فكرة من صورة: لجان المراجعة' });

@@ -1,10 +1,10 @@
 // إرفاق الصور (SPEC §8 الصور): أكبر نسخة من photo ← getFile ← تنزيل البايتات داخل الـ Worker
-// ← رفعها إلى SocialAPI من الخادم ← حفظ media_id. رابط ملف تيليجرام لا يُرسل لأي طرف (SPEC §4.4).
+// ← رفعها إلى SocialAPI من الخادم (وعند 413 من البوابة: بالرابط الموقّع) ← حفظ media_id. رابط ملف تيليجرام لا يُرسل لأي طرف (SPEC §4.4).
 
 import type { Ctx } from './context.ts';
 import { getDraft, updateDraft } from './db.ts';
 import { draftKeyboard, isEditable } from './preview.ts';
-import { SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
+import { getMediaStorage, SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
 import { clearKeyboard, downloadFile, editMessageText, sendMessage, TelegramError, type TgMessage } from './telegram.ts';
 
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // حد getFile في Bot API
@@ -79,6 +79,24 @@ export async function attachImage(ctx: Ctx, draftId: number, image: IncomingImag
         : err instanceof TelegramError
           ? 'تعذّر تنزيل الصورة من تيليجرام.'
           : 'حدث خطأ غير متوقع.';
-    await editMessageText(env, ctx.chatId, progress.message_id, `❌ لم تُرفق الصورة: ${reason}`);
+    const storage = err instanceof SocialApiError && err.status === 413 ? await storageNote(ctx) : '';
+    await editMessageText(env, ctx.chatId, progress.message_id, `❌ لم تُرفق الصورة: ${reason}${storage}`);
+  }
+}
+
+const mb = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(1);
+
+/** سطر مساحة الوسائط بعد 413 ليتبيّن هل السبب امتلاء الباقة؛ فشل جلبها لا يغيّر رسالة الخطأ. */
+async function storageNote(ctx: Ctx): Promise<string> {
+  try {
+    const s = await getMediaStorage(ctx.env);
+    if (typeof s.used_bytes !== 'number' || typeof s.limit_bytes !== 'number') return '';
+    if (s.limit_bytes < 0) return `\nℹ️ مساحة الوسائط غير محدودة في باقتك (المستخدم ${mb(s.used_bytes)}MB).`;
+    const full = s.used_bytes >= s.limit_bytes * 0.95;
+    return `\nℹ️ مساحة الوسائط في SocialAPI: ${mb(s.used_bytes)} من ${mb(s.limit_bytes)}MB${typeof s.count === 'number' ? ` (${s.count} ملف)` : ''}.${
+      full ? ' المساحة ممتلئة تقريباً: احذف وسائط قديمة من لوحة SocialAPI أو رقِّ الباقة.' : ''
+    }`;
+  } catch {
+    return '';
   }
 }

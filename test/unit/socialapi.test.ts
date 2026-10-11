@@ -92,6 +92,9 @@ test('error messages follow SPEC §11 with 429 split by documented codes', () =>
   assert.match(msg(401, 'auth.invalid_key'), /مفتاح SocialAPI غير صالح/);
   assert.match(msg(403, 'auth.insufficient_scope', { required_scope: 'posts:write' }), /posts:write/);
   assert.match(msg(0, 'network.timeout'), /تعذّر الاتصال/);
+  assert.equal(msg(413, 'billing.storage_quota'), 'امتلأت مساحة الوسائط في SocialAPI.');
+  assert.equal(msg(413, 'http.413'), 'رفضت SocialAPI الملف لكبر حجمه.');
+  assert.match(msg(403, 'media.storage_put_failed'), /مخزن SocialAPI \(http\.403\)/);
 });
 
 test('validation issues are described with platform and tweet position', () => {
