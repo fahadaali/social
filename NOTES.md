@@ -22,6 +22,7 @@
 | الحالة | `GET /posts/{pid}` | `status`، و`scheduled_at`، و`targets[].{platform, status, permalink, error}` |
 | رفع الوسائط | `POST /media/upload` | `multipart/form-data` بالحقل `file` (حتى 50MB)، ويعيد `media_id` جاهزاً |
 | رفع الوسائط (بديل) | `GET /media/upload-url` ← `PUT` ← `POST /media/{id}/verify` | مسار الرابط الموقّع، بلا حد حجم من الـ API. يُستعمل تلقائياً إن رُدّ الرفع من الخادم بـ 413 بلا رمز `billing.storage_quota` (ظهر ذلك فعلاً في 2026-10-11 بصورة: `http.413` بلا غلاف أخطاء، أي رفضته البوابة قبل الـ API) |
+| حذف الوسائط | `DELETE /media/{id}` | عند استبدال صورة مسودة تُحذف السابقة (404 يُعدّ نجاحاً، والفشل لا يُفشل الإرفاق). آمن لأن `media_id` لا يُنسخ بين المسودات، وإعادة المحاولة خاصة بحالة partial غير القابلة للتعديل |
 | مساحة الوسائط | `GET /media/storage` | `used_bytes` و`limit_bytes` (‎-1 غير محدود) و`count`؛ تُعرض في رسالة فشل الإرفاق بعد أي 413 |
 | تغيير الموعد | `PATCH /posts/{pid}` | `scheduled_at` فقط. يقبله للحالات `draft` و`scheduled` و`failed`، ويرد 409 إن بدأ النشر |
 | إلغاء الجدولة | `DELETE /posts/{pid}` | يلغي المجدول، **لكنه يحذف المنشور المنشور فعلاً من المنصات**. بعد الحذف يرد `GET` بـ 404 |

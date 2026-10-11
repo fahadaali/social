@@ -172,6 +172,7 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
     storagePut: 200,
     verify: { status: 200, json: { media_id: 'med_big', status: 'ready' } },
     storage: { status: 200, json: { used_bytes: 10485760, limit_bytes: 104857600, count: 3 } },
+    deleteMedia: 204,
     // (inputs) => رد النموذج، أو { __error: 'رسالة' } لرمي خطأ
     ai: null,
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
@@ -293,6 +294,7 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
       if (p === '/v1/media/upload-url' && request.method === 'GET') return json(mocks.uploadUrl.status, mocks.uploadUrl.json);
       if (/^\/v1\/media\/[^/]+\/verify$/.test(p) && request.method === 'POST') return json(mocks.verify.status, mocks.verify.json);
       if (p === '/v1/media/storage' && request.method === 'GET') return json(mocks.storage.status, mocks.storage.json);
+      if (/^\/v1\/media\/[^/]+$/.test(p) && request.method === 'DELETE') return new Response(null, { status: mocks.deleteMedia });
       if (p === '/v1/posts' && request.method === 'POST') {
         if (mocks.createPost) {
           const r = mocks.createPost(call.body);

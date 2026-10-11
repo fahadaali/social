@@ -4,7 +4,7 @@
 import type { Ctx } from './context.ts';
 import { getDraft, updateDraft } from './db.ts';
 import { draftKeyboard, isEditable } from './preview.ts';
-import { getMediaStorage, SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
+import { deleteMedia, getMediaStorage, SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
 import { clearKeyboard, downloadFile, editMessageText, sendMessage, TelegramError, type TgMessage } from './telegram.ts';
 
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // حد getFile في Bot API
@@ -56,11 +56,12 @@ export async function attachImage(ctx: Ctx, draftId: number, image: IncomingImag
     const mediaId = await uploadMedia(env, file.bytes, `draft-${draft.id}.${ext}`, contentType);
     await updateDraft(env.DB, draft.id, { media_id: mediaId });
     const updated = (await getDraft(env.DB, draft.id)) ?? { ...draft, media_id: mediaId };
+    const replacedNote = draft.media_id && draft.media_id !== mediaId ? await deleteReplaced(ctx, draft.id, draft.media_id) : '';
     await editMessageText(
       env,
       ctx.chatId,
       progress.message_id,
-      `✅ أُرفقت الصورة بالمسودة #${draft.id}.\nℹ️ تُنشر مع لينكدن فقط؛ X لا يدعم الصور عبر SocialAPI حالياً.`,
+      `✅ أُرفقت الصورة بالمسودة #${draft.id}.\nℹ️ تُنشر مع لينكدن فقط؛ X لا يدعم الصور عبر SocialAPI حالياً.${replacedNote}`,
       draftKeyboard(updated),
     );
     await clearKeyboard(env, ctx.chatId, draft.telegram_message_id);
@@ -81,6 +82,21 @@ export async function attachImage(ctx: Ctx, draftId: number, image: IncomingImag
           : 'حدث خطأ غير متوقع.';
     const storage = err instanceof SocialApiError && err.status === 413 ? await storageNote(ctx) : '';
     await editMessageText(env, ctx.chatId, progress.message_id, `❌ لم تُرفق الصورة: ${reason}${storage}`);
+  }
+}
+
+/**
+ * عند الاستبدال: تُحذف الصورة السابقة من مكتبة SocialAPI حتى لا تتراكم في مساحة الباقة.
+ * آمن لأن media_id لا يُنسخ بين المسودات، والمسودة القابلة للتعديل (pending/failed) يُنشأ لها منشور جديد
+ * بالصورة الجديدة عند النشر (إعادة المحاولة خاصة بحالة partial). فشل الحذف لا يُفشل الإرفاق.
+ */
+async function deleteReplaced(ctx: Ctx, draftId: number, oldMediaId: string): Promise<string> {
+  try {
+    await deleteMedia(ctx.env, oldMediaId);
+    return '\n🗑 حُذفت الصورة السابقة من مكتبة SocialAPI.';
+  } catch (err) {
+    console.error(JSON.stringify({ evt: 'media_delete_failed', draft: draftId, code: err instanceof SocialApiError ? err.code : 'unknown' }));
+    return '\n⚠️ تعذّر حذف الصورة السابقة من مكتبة SocialAPI؛ يمكنك حذفها من لوحتها.';
   }
 }
 

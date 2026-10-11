@@ -473,6 +473,7 @@ test('acceptance 6: 🖼 attach → photo downloaded in the Worker → uploaded 
     const [create] = bot.social('POST', '/v1/posts');
     assert.equal(create.body.targets[0].media, undefined, 'no media on X');
     assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    assert.ok(!JSON.stringify(create.body).includes('draft-1'), 'the image file name never appears in the post');
   }));
 
 test('image sent as a file (document) keeps its type', () =>
@@ -483,6 +484,51 @@ test('image sent as a file (document) keeps its type', () =>
     await bot.sendPhoto({ asDocument: true });
     await bot.waitFor(() => bot.social('POST', '/v1/media/upload').length, 10_000);
     assert.deepEqual(bot.social('POST', '/v1/media/upload')[0].form.file, { name: 'draft-1.png', type: 'image/png', size: 6 });
+  }));
+
+test('replacing an image deletes the previous one from the SocialAPI library; the first attach deletes nothing', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const first = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة')), 10_000, 'first');
+    assert.ok(!first.body.text.includes('السابقة'));
+    assert.equal(bot.social('DELETE').length, 0);
+
+    bot.mocks.upload = { status: 201, json: { media_id: 'med_2' } };
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const second = await bot.waitFor(
+      () => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('✅ أُرفقت الصورة'))[1],
+      10_000,
+      'second',
+    );
+    assert.match(second.body.text, /حُذفت الصورة السابقة/);
+    assert.deepEqual(bot.social('DELETE').map((c) => c.path), ['/v1/media/med_1']);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_2');
+  }));
+
+test('a failed delete of the replaced image does not fail the attach', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة')), 10_000, 'first');
+    bot.mocks.upload = { status: 201, json: { media_id: 'med_2' } };
+    bot.mocks.deleteMedia = 500;
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const second = await bot.waitFor(
+      () => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('✅ أُرفقت الصورة'))[1],
+      10_000,
+      'second',
+    );
+    assert.match(second.body.text, /تعذّر حذف الصورة السابقة/);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_2');
   }));
 
 test('413 from the gateway on server-side upload → falls back to the presigned URL path', () =>

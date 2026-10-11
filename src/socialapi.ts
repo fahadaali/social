@@ -329,6 +329,13 @@ export async function uploadMediaPresigned(env: Env, bytes: ArrayBuffer, filenam
   return id;
 }
 
+/** DELETE /media/{id} — حذف ملف من مكتبة الوسائط. 404 يُعدّ نجاحاً (محذوف من قبل، ربما من اللوحة). */
+export async function deleteMedia(env: Env, mediaId: string): Promise<void> {
+  const r = await send(env, 'DELETE', `/media/${encodeURIComponent(mediaId)}`);
+  if (r.status === 404) return;
+  if (r.status < 200 || r.status >= 300) throw toError(r);
+}
+
 export interface MediaStorage {
   used_bytes: number;
   /** -1 = غير محدود */
