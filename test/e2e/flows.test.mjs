@@ -514,8 +514,12 @@ test('with X keys: the image is uploaded to X at «تأكيد» and goes on the 
     assert.deepEqual(create.body.targets[0].media, [{ source_type: 'platform_attachment_id', source: '1880028106020515840', type: 'image' }]);
     assert.ok(create.body.targets[0].platform_data.thread.every((t) => t.media_ids.length === 0), 'no media on the thread');
     assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    // مدقق SocialAPI يرفض platform_attachment_id على X، فيُتحقق بلا صورة X ويُنشأ بها مع skip_validation
     const [validate] = bot.social('POST', '/v1/posts/validate').slice(-1);
-    assert.deepEqual(validate.body.targets[0].media, create.body.targets[0].media, 'validated with the X attachment');
+    assert.equal(validate.body.targets[0].media, undefined, 'validated without the X image');
+    assert.deepEqual(validate.body.targets[1].media, create.body.targets[1].media, 'LinkedIn validated as sent');
+    assert.deepEqual(validate.body.targets[0].platform_data, create.body.targets[0].platform_data, 'thread validated as sent');
+    assert.equal(create.body.skip_validation, true);
   }));
 
 test('X upload failure at «تأكيد» → nothing is created, the draft stays editable', () =>
@@ -564,6 +568,7 @@ test('if validation rejects the fallback media on X, it is dropped instead of bl
     const [create] = bot.social('POST', '/v1/posts');
     assert.equal(create.body.targets[0].media, undefined);
     assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    assert.equal(create.body.skip_validation, undefined, 'no X image → SocialAPI validation is never skipped');
     assert.equal(n, 4, 'each validation retried once without X media');
   }));
 
