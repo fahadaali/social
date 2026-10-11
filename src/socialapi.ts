@@ -282,15 +282,70 @@ export function readEngagement(m: TargetMetrics | undefined): Engagement {
   };
 }
 
-/** POST /media/upload — رفع من الخادم (multipart، الحقل file، حتى 50MB) ويعيد media_id جاهزاً. */
+/**
+ * POST /media/upload — رفع من الخادم (multipart، الحقل file، حتى 50MB) ويعيد media_id جاهزاً.
+ * إن رُدّ الطلب بـ 413 بلا رمز SocialAPI (البوابة رفضت حجم الجسم قبل أن يصل للـ API، لا امتلاء المساحة)
+ * نعيد المحاولة بمسار الرابط الموقّع الذي لا يحمل البايتات إلى الـ API أصلاً.
+ */
 export async function uploadMedia(env: Env, bytes: ArrayBuffer, filename: string, contentType: string): Promise<string> {
   const form = new FormData();
   form.append('file', new File([bytes], filename, { type: contentType }));
   const r = await send(env, 'POST', '/media/upload', form, 30_000);
+  if (r.status === 413) {
+    const err = toError(r);
+    if (err.code !== 'billing.storage_quota') return uploadMediaPresigned(env, bytes, filename, contentType);
+    throw err;
+  }
   if (r.status < 200 || r.status >= 300) throw toError(r);
   const id = (r.data as { media_id?: unknown } | null)?.media_id;
   if (typeof id !== 'string' || !id) throw new SocialApiError(r.status, 'invalid_response', 'media_id missing');
   return id;
+}
+
+/**
+ * مسار الرابط الموقّع (guides/media): GET /media/upload-url ← PUT البايتات إلى upload_url ← POST /media/{id}/verify.
+ * لا حد حجم من الـ API (تبقى سعة التخزين). خطوة verify إلزامية وإلا بقيت الوسائط pending وفشل النشر.
+ * مفتاح SocialAPI لا يُرسل إلى رابط التخزين.
+ */
+export async function uploadMediaPresigned(env: Env, bytes: ArrayBuffer, filename: string, contentType: string): Promise<string> {
+  const q = new URLSearchParams({ media_type: contentType, filename });
+  const r = await send(env, 'GET', `/media/upload-url?${q}`);
+  if (r.status < 200 || r.status >= 300) throw toError(r);
+  const { media_id: id, upload_url: uploadUrl } = (r.data ?? {}) as { media_id?: unknown; upload_url?: unknown };
+  if (typeof id !== 'string' || !id || typeof uploadUrl !== 'string' || !/^https:\/\//.test(uploadUrl)) {
+    throw new SocialApiError(r.status, 'invalid_response', 'media_id or upload_url missing');
+  }
+  let put: Response;
+  try {
+    put = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': contentType }, body: bytes, signal: AbortSignal.timeout(60_000) });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    throw new SocialApiError(0, name === 'TimeoutError' ? 'network.timeout' : 'network.error', name || 'fetch failed');
+  }
+  await put.body?.cancel();
+  if (!put.ok) throw new SocialApiError(put.status, 'media.storage_put_failed', '');
+  const v = await send(env, 'POST', `/media/${encodeURIComponent(id)}/verify`);
+  if (v.status < 200 || v.status >= 300) throw toError(v);
+  return id;
+}
+
+/** DELETE /media/{id} — حذف ملف من مكتبة الوسائط. 404 يُعدّ نجاحاً (محذوف من قبل، ربما من اللوحة). */
+export async function deleteMedia(env: Env, mediaId: string): Promise<void> {
+  const r = await send(env, 'DELETE', `/media/${encodeURIComponent(mediaId)}`);
+  if (r.status === 404) return;
+  if (r.status < 200 || r.status >= 300) throw toError(r);
+}
+
+export interface MediaStorage {
+  used_bytes: number;
+  /** -1 = غير محدود */
+  limit_bytes: number;
+  count: number;
+}
+
+/** GET /media/storage — المساحة المستخدمة وحدّ الباقة؛ لتوضيح سبب 413 للمستخدم. */
+export function getMediaStorage(env: Env): Promise<MediaStorage> {
+  return json<MediaStorage>(env, 'GET', '/media/storage');
 }
 
 // ---------- بناء طلب المنشور ----------
@@ -304,6 +359,17 @@ export interface PublishableDraft {
 
 export type PublishMode = { kind: 'draft' } | { kind: 'now' } | { kind: 'schedule'; at: string };
 
+/**
+ * صورة التغريدة الأولى في X:
+ * - xAttachmentId: معرّف وسائط رُفع إلى X مباشرة (x.ts) فيُرسل platform_attachment_id، وهو المسار الذي يعمل اليوم.
+ * - وإلا يُرسل media_id نفسه احتياطاً (xFallbackMedia، الافتراض true): موصل X في SocialAPI يتجاهله حالياً،
+ *   وتظهر الصورة تلقائياً متى أضافت SocialAPI دعم وسائط X.
+ */
+export interface XImageOptions {
+  xAttachmentId?: string;
+  xFallbackMedia?: boolean;
+}
+
 export class ConfigError extends Error {}
 
 /**
@@ -311,11 +377,11 @@ export class ConfigError extends Error {}
  * - X: النص = التغريدة الأولى، وبقية الثريد في platform_data.thread لهدف X وحده
  *   (موثّق في صفحة موصل X). هذا يُبقي الثريد خارج هدف لينكدن فلا يلزم منشور ثانٍ — انظر NOTES.md.
  *   كل عنصر كائن {text, media_ids} كما تشترط SocialAPI في رسالة التحقق، لا نص مجرد كما في التوثيق المنشور.
- * - LinkedIn: النص عبر تجاوز الهدف، والصورة (إن وجدت) على هدف لينكدن فقط لأن موصل X
- *   لا يدعم الوسائط حالياً ويتجاهلها — انظر NOTES.md.
+ *   الصورة (إن وجدت) على التغريدة الأولى وحدها (هدف X نفسه)، لا على عناصر الثريد — انظر XImageOptions.
+ * - LinkedIn: النص عبر تجاوز الهدف، والصورة (إن وجدت) بـ media_id — انظر NOTES.md القسم 2.2.
  * بدون publish_now أو scheduled_at يُحفظ المنشور مسودة (لا تستهلك رصيداً)، وهذا وضع DRY_RUN.
  */
-export function buildPostRequest(env: Env, draft: PublishableDraft, mode: PublishMode): CreatePostRequest {
+export function buildPostRequest(env: Env, draft: PublishableDraft, mode: PublishMode, image: XImageOptions = {}): CreatePostRequest {
   const targets: TargetRequest[] = [];
   for (const platform of draft.platforms) {
     const id = accountId(env, platform);
@@ -326,9 +392,15 @@ export function buildPostRequest(env: Env, draft: PublishableDraft, mode: Publis
     }
     if (platform === 'x') {
       const [first, ...rest] = draft.x_segments;
+      const media: MediaInput[] | null = image.xAttachmentId
+        ? [{ source_type: 'platform_attachment_id', source: image.xAttachmentId, type: 'image' }]
+        : draft.media_id && image.xFallbackMedia !== false
+          ? [{ source_type: 'media_id', source: draft.media_id }]
+          : null;
       targets.push({
         account_id: id,
         text: first ?? '',
+        ...(media ? { media } : {}),
         ...(rest.length ? { platform_data: { thread: rest.map((t) => ({ text: t, media_ids: [] })) } } : {}),
       });
     } else {
@@ -408,6 +480,8 @@ export function socialApiErrorMessage(err: unknown): string {
   if (code === 'post.no_retryable_deliveries') return 'لا يوجد في المنشور جزء فاشل لإعادة محاولته.';
   if (code === 'billing.past_due') return 'حساب SocialAPI موقوف لتعثّر الدفع.';
   if (code === 'billing.storage_quota') return 'امتلأت مساحة الوسائط في SocialAPI.';
+  if (status === 413) return 'رفضت SocialAPI الملف لكبر حجمه.';
+  if (code === 'media.storage_put_failed') return `تعذّر رفع الملف إلى مخزن SocialAPI (http.${status}).`;
   if (code.startsWith('validation.') && err.apiMessage) return `رفضت SocialAPI الطلب: ${err.apiMessage}`;
   return `خطأ من SocialAPI (${code}).`;
 }

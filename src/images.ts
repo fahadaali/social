@@ -1,11 +1,12 @@
 // إرفاق الصور (SPEC §8 الصور): أكبر نسخة من photo ← getFile ← تنزيل البايتات داخل الـ Worker
-// ← رفعها إلى SocialAPI من الخادم ← حفظ media_id. رابط ملف تيليجرام لا يُرسل لأي طرف (SPEC §4.4).
+// ← رفعها إلى SocialAPI من الخادم (وعند 413 من البوابة: بالرابط الموقّع) ← حفظ media_id. رابط ملف تيليجرام لا يُرسل لأي طرف (SPEC §4.4).
 
 import type { Ctx } from './context.ts';
 import { getDraft, updateDraft } from './db.ts';
 import { draftKeyboard, isEditable } from './preview.ts';
-import { SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
+import { deleteMedia, getMediaStorage, SocialApiError, socialApiErrorMessage, uploadMedia } from './socialapi.ts';
 import { clearKeyboard, downloadFile, editMessageText, sendMessage, TelegramError, type TgMessage } from './telegram.ts';
+import { X_MAX_IMAGE_BYTES, xUploadConfigured } from './x.ts';
 
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024; // حد getFile في Bot API
 
@@ -54,13 +55,16 @@ export async function attachImage(ctx: Ctx, draftId: number, image: IncomingImag
     const contentType = image.mime ?? (extFromPath ? MIME_BY_EXT[extFromPath] : undefined) ?? 'image/jpeg';
     const ext = EXT_BY_MIME[contentType] ?? extFromPath ?? 'jpg';
     const mediaId = await uploadMedia(env, file.bytes, `draft-${draft.id}.${ext}`, contentType);
-    await updateDraft(env.DB, draft.id, { media_id: mediaId });
-    const updated = (await getDraft(env.DB, draft.id)) ?? { ...draft, media_id: mediaId };
+    // مصدر الصورة في تيليجرام يُحفظ لرفعها إلى X عند «تأكيد» النشر (x.ts: معرّف X ينتهي بعد 24 ساعة)
+    const source = { image_file_id: image.fileId, image_mime: contentType, image_size: file.bytes.byteLength };
+    await updateDraft(env.DB, draft.id, { media_id: mediaId, ...source });
+    const updated = (await getDraft(env.DB, draft.id)) ?? { ...draft, media_id: mediaId, ...source };
+    const replacedNote = draft.media_id && draft.media_id !== mediaId ? await deleteReplaced(ctx, draft.id, draft.media_id) : '';
     await editMessageText(
       env,
       ctx.chatId,
       progress.message_id,
-      `✅ أُرفقت الصورة بالمسودة #${draft.id}.\nℹ️ تُنشر مع لينكدن فقط؛ X لا يدعم الصور عبر SocialAPI حالياً.`,
+      `✅ أُرفقت الصورة بالمسودة #${draft.id}.\n${xNote(ctx, source.image_size)}${replacedNote}`,
       draftKeyboard(updated),
     );
     await clearKeyboard(env, ctx.chatId, draft.telegram_message_id);
@@ -79,6 +83,48 @@ export async function attachImage(ctx: Ctx, draftId: number, image: IncomingImag
         : err instanceof TelegramError
           ? 'تعذّر تنزيل الصورة من تيليجرام.'
           : 'حدث خطأ غير متوقع.';
-    await editMessageText(env, ctx.chatId, progress.message_id, `❌ لم تُرفق الصورة: ${reason}`);
+    const storage = err instanceof SocialApiError && err.status === 413 ? await storageNote(ctx) : '';
+    await editMessageText(env, ctx.chatId, progress.message_id, `❌ لم تُرفق الصورة: ${reason}${storage}`);
+  }
+}
+
+/** أين تظهر الصورة: لينكدن دائماً، والتغريدة الأولى في X إن ضُبطت مفاتيح X وناسب الحجم. */
+function xNote(ctx: Ctx, size: number): string {
+  if (!xUploadConfigured(ctx.env)) {
+    return 'ℹ️ تُنشر مع لينكدن، وتُرسل لـ X عبر SocialAPI التي لا تنشر صور X حالياً. لنشرها في X أضف مفاتيح X (README).';
+  }
+  if (size > X_MAX_IMAGE_BYTES) return 'ℹ️ تُنشر مع لينكدن فقط: حجمها أكبر من 5MB، وهو حد X للصور.';
+  return '🖼 تُنشر مع لينكدن ومع التغريدة الأولى في X.';
+}
+
+/**
+ * عند الاستبدال: تُحذف الصورة السابقة من مكتبة SocialAPI حتى لا تتراكم في مساحة الباقة.
+ * آمن لأن media_id لا يُنسخ بين المسودات، والمسودة القابلة للتعديل (pending/failed) يُنشأ لها منشور جديد
+ * بالصورة الجديدة عند النشر (إعادة المحاولة خاصة بحالة partial). فشل الحذف لا يُفشل الإرفاق.
+ */
+async function deleteReplaced(ctx: Ctx, draftId: number, oldMediaId: string): Promise<string> {
+  try {
+    await deleteMedia(ctx.env, oldMediaId);
+    return '\n🗑 حُذفت الصورة السابقة من مكتبة SocialAPI.';
+  } catch (err) {
+    console.error(JSON.stringify({ evt: 'media_delete_failed', draft: draftId, code: err instanceof SocialApiError ? err.code : 'unknown' }));
+    return '\n⚠️ تعذّر حذف الصورة السابقة من مكتبة SocialAPI؛ يمكنك حذفها من لوحتها.';
+  }
+}
+
+const mb = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(1);
+
+/** سطر مساحة الوسائط بعد 413 ليتبيّن هل السبب امتلاء الباقة؛ فشل جلبها لا يغيّر رسالة الخطأ. */
+async function storageNote(ctx: Ctx): Promise<string> {
+  try {
+    const s = await getMediaStorage(ctx.env);
+    if (typeof s.used_bytes !== 'number' || typeof s.limit_bytes !== 'number') return '';
+    if (s.limit_bytes < 0) return `\nℹ️ مساحة الوسائط غير محدودة في باقتك (المستخدم ${mb(s.used_bytes)}MB).`;
+    const full = s.used_bytes >= s.limit_bytes * 0.95;
+    return `\nℹ️ مساحة الوسائط في SocialAPI: ${mb(s.used_bytes)} من ${mb(s.limit_bytes)}MB${typeof s.count === 'number' ? ` (${s.count} ملف)` : ''}.${
+      full ? ' المساحة ممتلئة تقريباً: احذف وسائط قديمة من لوحة SocialAPI أو رقِّ الباقة.' : ''
+    }`;
+  } catch {
+    return '';
   }
 }

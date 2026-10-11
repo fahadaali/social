@@ -21,6 +21,10 @@ export interface Draft extends DraftContent {
   id: number;
   idea_id: number | null;
   media_id: string | null;
+  /** مصدر الصورة في تيليجرام لرفعها إلى X عند النشر (null للمسودات الأقدم). */
+  image_file_id: string | null;
+  image_mime: string | null;
+  image_size: number | null;
   platforms: Platform[];
   status: DraftStatus;
   socialapi_post_id: string | null;
@@ -42,6 +46,9 @@ interface DraftRow {
   visual_brief: string | null;
   notes: string | null;
   media_id: string | null;
+  image_file_id: string | null;
+  image_mime: string | null;
+  image_size: number | null;
   platforms: string;
   status: DraftStatus;
   socialapi_post_id: string | null;
@@ -74,6 +81,9 @@ function rowToDraft(r: DraftRow): Draft {
     visual_brief: r.visual_brief,
     notes: r.notes,
     media_id: r.media_id,
+    image_file_id: r.image_file_id ?? null,
+    image_mime: r.image_mime ?? null,
+    image_size: r.image_size ?? null,
     platforms: jsonArray(r.platforms).filter((p): p is Platform => (PLATFORMS as readonly string[]).includes(p)),
     status: r.status,
     socialapi_post_id: r.socialapi_post_id,
@@ -290,6 +300,9 @@ export async function replaceDraftContent(db: D1Database, id: number, content: D
 
 type DraftPatch = Partial<{
   media_id: string | null;
+  image_file_id: string | null;
+  image_mime: string | null;
+  image_size: number | null;
   platforms: Platform[];
   status: DraftStatus;
   socialapi_post_id: string | null;

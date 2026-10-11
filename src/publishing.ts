@@ -28,14 +28,18 @@ import {
   SocialApiError,
   socialApiErrorMessage,
   validatePost,
+  type CreatePostRequest,
   type Post,
   type PublishMode,
   type Usage,
   type ValidationIssue,
+  type ValidationResult,
+  type XImageOptions,
 } from './socialapi.ts';
-import { clearKeyboard, editMessageText, sendMessage, type InlineKeyboard } from './telegram.ts';
+import { clearKeyboard, downloadFile, editMessageText, sendMessage, TelegramError, type InlineKeyboard } from './telegram.ts';
 import { LINKEDIN_MAX_CHARS, X_MAX_WEIGHTED, xTooLong } from './text.ts';
 import { formatRiyadh, parseUtc, toRfc3339, toSqlUtc } from './time.ts';
+import { uploadXImage, X_MAX_IMAGE_BYTES, X_MEDIA_TTL_MS, XApiError, xErrorMessage, xUploadConfigured } from './x.ts';
 
 export type UserMode = { kind: 'now' } | { kind: 'schedule'; at: Date };
 
@@ -124,6 +128,66 @@ function apiMode(env: Env, mode: UserMode): PublishMode {
   return mode.kind === 'now' ? { kind: 'now' } : { kind: 'schedule', at: toRfc3339(mode.at) };
 }
 
+// ---------- صورة X ----------
+
+/**
+ * كيف تصل صورة المسودة إلى التغريدة الأولى:
+ * - upload: تُرفع إلى X مباشرة عند «تأكيد» وتُرسل platform_attachment_id (x.ts).
+ * - fallback: يُرسل media_id عبر SocialAPI التي تتجاهله لـ X حالياً، مع السبب لرسالة التأكيد.
+ * معرّف وسائط X ينتهي بعد 24 ساعة، فالجدولة الأبعد من 23 ساعة لا تُرفع لها صورة X.
+ */
+type XFallbackReason = 'no_keys' | 'dry' | 'no_source' | 'too_large' | 'far_schedule';
+export type XImagePlan = { kind: 'none' } | { kind: 'upload' } | { kind: 'fallback'; reason: XFallbackReason };
+
+export function xImagePlan(env: Env, d: Draft, mode: UserMode, now = Date.now()): XImagePlan {
+  if (!d.media_id || !d.platforms.includes('x')) return { kind: 'none' };
+  if (!xUploadConfigured(env)) return { kind: 'fallback', reason: 'no_keys' };
+  if (isDryRun(env)) return { kind: 'fallback', reason: 'dry' };
+  if (!d.image_file_id) return { kind: 'fallback', reason: 'no_source' };
+  if (d.image_size !== null && d.image_size > X_MAX_IMAGE_BYTES) return { kind: 'fallback', reason: 'too_large' };
+  if (mode.kind === 'schedule' && mode.at.getTime() - now > X_MEDIA_TTL_MS) return { kind: 'fallback', reason: 'far_schedule' };
+  return { kind: 'upload' };
+}
+
+const X_PLAN_LINE: Record<'upload' | XFallbackReason, string> = {
+  upload: '🖼 الصورة تُنشر مع لينكدن ومع التغريدة الأولى في X.',
+  no_keys: 'ℹ️ الصورة تُنشر مع لينكدن، وتُرسل لـ X عبر SocialAPI التي لا تنشر صور X حالياً. لنشرها في X أضف مفاتيح X (README).',
+  dry: 'ℹ️ في وضع التجربة لا تُرفع الصورة إلى X؛ تُرسل لـ X عبر SocialAPI فقط.',
+  no_source: 'ℹ️ أُرفقت هذه الصورة قبل دعم صور X، فتُنشر مع لينكدن فقط. أعد إرفاقها لتُنشر في X أيضاً.',
+  too_large: 'ℹ️ الصورة أكبر من 5MB (حد X)، فتُنشر مع لينكدن فقط.',
+  far_schedule:
+    'ℹ️ الموعد بعد أكثر من 23 ساعة، وصورة X تنتهي صلاحيتها بعد 24 ساعة من رفعها، فتُنشر الصورة مع لينكدن فقط. لتظهر في X: انشر الآن أو جدول خلال 23 ساعة.',
+};
+
+export function xPlanLine(plan: XImagePlan): string | null {
+  if (plan.kind === 'none') return null;
+  return X_PLAN_LINE[plan.kind === 'upload' ? 'upload' : plan.reason];
+}
+
+const isXMediaIssue = (i: ValidationIssue): boolean =>
+  (i.platform === 'twitter' || i.platform === 'x') && /media/i.test(`${i.field ?? ''} ${i.message ?? ''}`);
+
+/**
+ * يبني الطلب ويتحقق منه. إن رفض التحقق media_id الاحتياطي على هدف X (وهو مجرد تمهيد لدعم مستقبلي)
+ * يُعاد البناء بدونه بدل أن يمنع النشر. أما معرّف X المرفوع فعلاً فرفضه يُعرض خطأً كما هو.
+ */
+async function buildAndValidate(
+  env: Env,
+  d: Draft,
+  mode: UserMode,
+  image: XImageOptions,
+): Promise<{ post: CreatePostRequest; v: ValidationResult }> {
+  const scheduledAt = mode.kind === 'schedule' ? toRfc3339(mode.at) : undefined;
+  let post = buildPostRequest(env, d, apiMode(env, mode), image);
+  let v = await validatePost(env, buildValidateRequest(post, scheduledAt));
+  const invalid = !v.valid || v.errors.length > 0;
+  if (invalid && !image.xAttachmentId && d.media_id && d.platforms.includes('x') && v.errors.some(isXMediaIssue)) {
+    post = buildPostRequest(env, d, apiMode(env, mode), { ...image, xFallbackMedia: false });
+    v = await validatePost(env, buildValidateRequest(post, scheduledAt));
+  }
+  return { post, v };
+}
+
 /** فحوص محلية + حارس الرصيد (SPEC §8.6) + مسار التحقق (SPEC §8.1). */
 async function precheck(ctx: Ctx, d: Draft, mode: UserMode): Promise<Precheck> {
   const { env } = ctx;
@@ -139,9 +203,8 @@ async function precheck(ctx: Ctx, d: Draft, mode: UserMode): Promise<Precheck> {
   if (d.platforms.includes('linkedin') && d.linkedin_text.length > LINKEDIN_MAX_CHARS) {
     return { ok: false, message: `نص لينكدن أطول من ${LINKEDIN_MAX_CHARS} حرف. عدّل المسودة أولاً.` };
   }
-  let post;
   try {
-    post = buildPostRequest(env, d, apiMode(env, mode));
+    buildPostRequest(env, d, apiMode(env, mode));
   } catch (err) {
     if (err instanceof ConfigError) return { ok: false, message: err.message };
     throw err;
@@ -154,8 +217,8 @@ async function precheck(ctx: Ctx, d: Draft, mode: UserMode): Promise<Precheck> {
   }
 
   try {
-    const scheduledAt = mode.kind === 'schedule' ? toRfc3339(mode.at) : undefined;
-    const v = await validatePost(env, buildValidateRequest(post, scheduledAt));
+    // صورة X لم تُرفع بعد (تُرفع عند «تأكيد»)، فيُتحقق هنا بالمسار الاحتياطي
+    const { v } = await buildAndValidate(env, d, mode, {});
     if (!v.valid || v.errors.length) {
       return {
         ok: false,
@@ -197,7 +260,8 @@ export async function requestConfirmation(ctx: Ctx, draftId: number, mode: UserM
   const r = check.credits.remaining;
   if (!check.credits.unlimited && r !== null && r <= 2) lines.push('⚠️ تنبيه: رصيد الشهر يوشك على النفاد.');
   if (isDryRun(ctx.env)) lines.push('🧪 وضع التجربة مفعّل: سيُحفظ مسودةً في SocialAPI فقط، ولن يُنشر ولن يُستهلك رصيد.');
-  if (d.media_id && d.platforms.includes('x')) lines.push('ℹ️ الصورة تُنشر مع لينكدن فقط.');
+  const xLine = xPlanLine(xImagePlan(ctx.env, d, mode));
+  if (xLine) lines.push(xLine);
   if (check.warnings.length) lines.push(`تنبيهات التحقق:\n${bullet(check.warnings)}`);
 
   const fp = fingerprint(d, isDryRun(ctx.env));
@@ -255,9 +319,26 @@ export async function confirmPublish(
   let createAttempted = false;
   let created: Post | null = null;
   try {
-    const post = buildPostRequest(env, before, apiMode(env, mode));
+    // صورة X تُرفع الآن لا قبل ذلك، لأن معرّفها ينتهي بعد 24 ساعة. فشلها يوقف كل شيء قبل إنشاء المنشور
+    const image: XImageOptions = {};
+    if (xImagePlan(env, before, mode).kind === 'upload' && before.image_file_id) {
+      await say('⏳ أرفع الصورة إلى X…');
+      try {
+        const file = await downloadFile(env, before.image_file_id);
+        const contentType = before.image_mime ?? 'image/jpeg';
+        image.xAttachmentId = await uploadXImage(env, file.bytes, `draft-${before.id}.${contentType.split('/')[1] ?? 'jpg'}`, contentType);
+      } catch (err) {
+        console.error(JSON.stringify({ evt: 'x_upload_failed', draft: draftId, code: err instanceof TelegramError ? `tg_${err.code}` : err instanceof XApiError ? `x_${err.status}_${err.detail}` : 'unknown' }));
+        await updateDraft(db, draftId, { status: before.status });
+        const reason = err instanceof TelegramError ? 'تعذّر تنزيل الصورة من تيليجرام؛ أعد إرفاقها.' : xErrorMessage(err);
+        await say(
+          `❌ لم يُنشر شيء: تعذّر رفع الصورة إلى X.\n${reason}\nأعد المحاولة من زر «انشر» أو «جدول». لتنشر بلا صورة في X احذف مفاتيح X من إعدادات الـ Worker مؤقتاً.`,
+        );
+        return;
+      }
+    }
     // التحقق أولاً مباشرة قبل النشر (SPEC §8.1)
-    const v = await validatePost(env, buildValidateRequest(post, mode.kind === 'schedule' ? toRfc3339(mode.at) : undefined));
+    const { post, v } = await buildAndValidate(env, before, mode, image);
     if (!v.valid || v.errors.length) {
       await updateDraft(db, draftId, { status: 'pending' });
       await say(`❌ لم يُنشر — أظهر التحقق أخطاء:\n${v.errors.length ? bullet(v.errors) : '• لم تُحدَّد تفاصيل الخطأ'}`);

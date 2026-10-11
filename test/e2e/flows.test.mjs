@@ -471,8 +471,100 @@ test('acceptance 6: 🖼 attach → photo downloaded in the Worker → uploaded 
     await bot.press(bot.button('تأكيد'), { messageId: 8000 });
     await bot.waitFor(() => bot.social('POST', '/v1/posts').length, 10_000);
     const [create] = bot.social('POST', '/v1/posts');
-    assert.equal(create.body.targets[0].media, undefined, 'no media on X');
+    // بلا مفاتيح X: media_id احتياطاً على التغريدة الأولى (تتجاهله SocialAPI حالياً)، ولا شيء على الثريد
+    assert.deepEqual(create.body.targets[0].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    assert.ok(create.body.targets[0].platform_data.thread.every((t) => t.media_ids.length === 0), 'no media on the thread');
+    assert.equal(bot.calls.filter((c) => c.host === 'api.x.com').length, 0);
     assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    assert.ok(!JSON.stringify(create.body).includes('draft-1'), 'the image file name never appears in the post');
+  }));
+
+const X_KEYS = { X_API_KEY: 'xk', X_API_SECRET: 'xs', X_ACCESS_TOKEN: 'xt', X_ACCESS_TOKEN_SECRET: 'xts' };
+
+async function attachPhoto(bot, opts) {
+  await bot.press('img:1');
+  await bot.settle();
+  await bot.sendPhoto(opts);
+  return bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة')), 10_000, 'attached');
+}
+
+test('with X keys: the image is uploaded to X at «تأكيد» and goes on the first tweet only; LinkedIn keeps media_id', () =>
+  withBot({ vars: { DRY_RUN: 'false', ...X_KEYS } }, async (bot) => {
+    await makeDraft(bot);
+    const attached = await attachPhoto(bot);
+    assert.match(attached.body.text, /مع لينكدن ومع التغريدة الأولى في X/);
+    const row = await bot.row('SELECT image_file_id, image_mime, image_size FROM drafts WHERE id = 1');
+    assert.deepEqual({ ...row }, { image_file_id: 'large', image_mime: 'image/jpeg', image_size: 6 });
+    assert.equal(bot.calls.filter((c) => c.host === 'api.x.com').length, 0, 'nothing goes to X before «تأكيد»');
+
+    await bot.press(bot.button('✅ انشر الآن'));
+    const confirm = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد النشر')), 10_000, 'confirm');
+    assert.match(confirm.body.text, /🖼 الصورة تُنشر مع لينكدن ومع التغريدة الأولى في X/);
+    await bot.press(bot.button('تأكيد'), { messageId: 8100 });
+    await bot.waitFor(() => bot.social('POST', '/v1/posts').length, 15_000, 'created');
+
+    const [up] = bot.calls.filter((c) => c.host === 'api.x.com');
+    assert.equal(up.path, '/2/media/upload');
+    assert.match(up.headers.authorization, /^OAuth .*oauth_consumer_key="xk".*oauth_signature="[^"]+".*oauth_token="xt"/);
+    assert.deepEqual(up.form.media, { name: 'draft-1.jpeg', type: 'image/jpeg', size: 6 });
+    assert.equal(up.form.media_category, 'tweet_image');
+    assert.ok(!JSON.stringify(up).includes('sapi_key_test') && !JSON.stringify(up).includes('xs'), 'no other secrets sent to X');
+
+    const [create] = bot.social('POST', '/v1/posts');
+    assert.deepEqual(create.body.targets[0].media, [{ source_type: 'platform_attachment_id', source: '1880028106020515840', type: 'image' }]);
+    assert.ok(create.body.targets[0].platform_data.thread.every((t) => t.media_ids.length === 0), 'no media on the thread');
+    assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    const [validate] = bot.social('POST', '/v1/posts/validate').slice(-1);
+    assert.deepEqual(validate.body.targets[0].media, create.body.targets[0].media, 'validated with the X attachment');
+  }));
+
+test('X upload failure at «تأكيد» → nothing is created, the draft stays editable', () =>
+  withBot({ vars: { DRY_RUN: 'false', ...X_KEYS } }, async (bot) => {
+    bot.mocks.xUpload = { status: 401, json: { title: 'Unauthorized', detail: 'Unauthorized' } };
+    await makeDraft(bot);
+    await attachPhoto(bot);
+    await bot.press(bot.button('✅ انشر الآن'));
+    await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد النشر')), 10_000, 'confirm');
+    await bot.press(bot.button('تأكيد'), { messageId: 8200 });
+    const fail = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('❌ لم يُنشر شيء')), 10_000, 'failed');
+    assert.match(fail.body.text, /X_API_KEY/);
+    assert.equal(bot.social('POST', '/v1/posts').length, 0);
+    assert.equal((await bot.row('SELECT status FROM drafts WHERE id = 1')).status, 'pending');
+  }));
+
+test('with X keys, a schedule more than 23h ahead does not upload to X and says so', () =>
+  withBot({ vars: { DRY_RUN: 'false', ...X_KEYS } }, async (bot) => {
+    await makeDraft(bot);
+    await attachPhoto(bot);
+    const unix = Math.floor(Date.now() / 1000) + 30 * 3600;
+    await bot.press(`sat:1:${unix}`, { messageId: 1 });
+    const confirm = await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد جدولة النشر')), 10_000, 'confirm');
+    assert.match(confirm.body.text, /الموعد بعد أكثر من 23 ساعة/);
+    await bot.press(bot.button('تأكيد'), { messageId: 8300 });
+    await bot.waitFor(() => bot.social('POST', '/v1/posts').length, 10_000, 'created');
+    assert.equal(bot.calls.filter((c) => c.host === 'api.x.com').length, 0);
+    assert.deepEqual(bot.social('POST', '/v1/posts')[0].body.targets[0].media, [{ source_type: 'media_id', source: 'med_1' }]);
+  }));
+
+test('if validation rejects the fallback media on X, it is dropped instead of blocking the post', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await attachPhoto(bot);
+    let n = 0;
+    bot.mocks.validateFn = (body) => {
+      n++;
+      return body.targets[0].media
+        ? { valid: false, errors: [{ platform: 'twitter', field: 'media', message: 'media is not supported for this platform' }], warnings: [] }
+        : { valid: true, errors: [], warnings: [] };
+    };
+    await bot.press(bot.button('✅ انشر الآن'));
+    await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('تأكيد النشر')), 10_000, 'confirm');
+    await bot.press(bot.button('تأكيد'), { messageId: 8400 });
+    await bot.waitFor(() => bot.social('POST', '/v1/posts').length, 10_000, 'created');
+    const [create] = bot.social('POST', '/v1/posts');
+    assert.equal(create.body.targets[0].media, undefined);
+    assert.deepEqual(create.body.targets[1].media, [{ source_type: 'media_id', source: 'med_1' }]);
+    assert.equal(n, 4, 'each validation retried once without X media');
   }));
 
 test('image sent as a file (document) keeps its type', () =>
@@ -483,6 +575,87 @@ test('image sent as a file (document) keeps its type', () =>
     await bot.sendPhoto({ asDocument: true });
     await bot.waitFor(() => bot.social('POST', '/v1/media/upload').length, 10_000);
     assert.deepEqual(bot.social('POST', '/v1/media/upload')[0].form.file, { name: 'draft-1.png', type: 'image/png', size: 6 });
+  }));
+
+test('replacing an image deletes the previous one from the SocialAPI library; the first attach deletes nothing', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const first = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة')), 10_000, 'first');
+    assert.ok(!first.body.text.includes('السابقة'));
+    assert.equal(bot.social('DELETE').length, 0);
+
+    bot.mocks.upload = { status: 201, json: { media_id: 'med_2' } };
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const second = await bot.waitFor(
+      () => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('✅ أُرفقت الصورة'))[1],
+      10_000,
+      'second',
+    );
+    assert.match(second.body.text, /حُذفت الصورة السابقة/);
+    assert.deepEqual(bot.social('DELETE').map((c) => c.path), ['/v1/media/med_1']);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_2');
+  }));
+
+test('a failed delete of the replaced image does not fail the attach', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة')), 10_000, 'first');
+    bot.mocks.upload = { status: 201, json: { media_id: 'med_2' } };
+    bot.mocks.deleteMedia = 500;
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const second = await bot.waitFor(
+      () => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('✅ أُرفقت الصورة'))[1],
+      10_000,
+      'second',
+    );
+    assert.match(second.body.text, /تعذّر حذف الصورة السابقة/);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_2');
+  }));
+
+test('413 from the gateway on server-side upload → falls back to the presigned URL path', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.upload = { status: 413, html: '<html><body>413 Request Entity Too Large</body></html>' };
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto({ asDocument: true });
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('✅ أُرفقت الصورة بالمسودة #1')), 10_000, 'attached');
+    const [uploadUrl] = bot.social('GET', '/v1/media/upload-url');
+    const q = new URL(uploadUrl.url).searchParams;
+    assert.deepEqual([q.get('media_type'), q.get('filename')], ['image/png', 'draft-1.png']);
+    const put = bot.calls.find((c) => c.host === 'storage.mock');
+    assert.equal(put.method, 'PUT');
+    assert.equal(put.headers['content-type'], 'image/png');
+    assert.equal(put.size, 6);
+    assert.equal(put.headers.authorization, undefined, 'SocialAPI key never sent to storage');
+    assert.equal(bot.social('POST', '/v1/media/med_big/verify').length, 1);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, 'med_big');
+  }));
+
+test('413 storage quota → no fallback; failure message shows media storage usage', () =>
+  withBot({}, async (bot) => {
+    bot.mocks.upload = { status: 413, json: { error: { code: 'billing.storage_quota', message: 'Storage quota exceeded' } } };
+    bot.mocks.storage = { status: 200, json: { used_bytes: 104857600, limit_bytes: 104857600, count: 40 } };
+    await makeDraft(bot);
+    await bot.press('img:1');
+    await bot.settle();
+    await bot.sendPhoto();
+    const fail = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('❌ لم تُرفق الصورة')), 10_000, 'failed');
+    assert.match(fail.body.text, /امتلأت مساحة الوسائط/);
+    assert.match(fail.body.text, /100\.0 من 100\.0MB \(40 ملف\)/);
+    assert.match(fail.body.text, /احذف وسائط قديمة/);
+    assert.equal(bot.social('GET', '/v1/media/upload-url').length, 0);
+    assert.equal((await bot.row('SELECT media_id FROM drafts WHERE id = 1')).media_id, null);
   }));
 
 test('a photo without awaiting_image becomes a photo idea from its caption; no caption → asks for one', () =>

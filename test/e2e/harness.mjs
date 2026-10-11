@@ -167,6 +167,14 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
     retryPost: null, // (id) => {status, json}
     metrics: null, // (id) => {status, json}
     upload: { status: 201, json: { media_id: 'med_1' } },
+    // مسار الرابط الموقّع: GET /v1/media/upload-url ← PUT إلى storage.mock ← POST /v1/media/{id}/verify
+    uploadUrl: { status: 200, json: { media_id: 'med_big', upload_url: 'https://storage.mock/media/med_big?X-Amz-Signature=sig', expires_at: '2026-10-11T10:15:00Z' } },
+    storagePut: 200,
+    verify: { status: 200, json: { media_id: 'med_big', status: 'ready' } },
+    storage: { status: 200, json: { used_bytes: 10485760, limit_bytes: 104857600, count: 3 } },
+    deleteMedia: 204,
+    // رفع الصورة إلى X مباشرة (POST api.x.com/2/media/upload)
+    xUpload: { status: 200, json: { data: { id: '1880028106020515840', media_key: '3_1880028106020515840', size: 6, expires_after_secs: 86400 } } },
     // (inputs) => رد النموذج، أو { __error: 'رسالة' } لرمي خطأ
     ai: null,
     // حاجز: يحبس ردود answerCallbackQuery حتى يصل هذا العدد منها ثم يطلقها معاً (لاختبار السباق)
@@ -200,8 +208,14 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
         if (/json|text/.test(value.type)) call.form[key].text = await value.text();
       }
     }
+    else if (url.hostname === 'storage.mock') call.size = (await request.arrayBuffer()).byteLength;
     call.headers = Object.fromEntries(request.headers);
     calls.push(call);
+
+    if (url.hostname === 'storage.mock') return new Response(null, { status: mocks.storagePut });
+    if (url.hostname === 'api.x.com' && url.pathname === '/2/media/upload' && request.method === 'POST') {
+      return json(mocks.xUpload.status, mocks.xUpload.json);
+    }
 
     if (url.hostname === 'api.telegram.org') {
       if (url.pathname.startsWith('/file/')) return new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]));
@@ -275,9 +289,18 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
             warnings: [],
           });
         }
+        if (mocks.validateFn) return json(200, mocks.validateFn(call.body));
         return json(200, mocks.validate);
       }
-      if (p === '/v1/media/upload' && request.method === 'POST') return json(mocks.upload.status, mocks.upload.json);
+      if (p === '/v1/media/upload' && request.method === 'POST') {
+        // بوابة ترفض حجم الجسم: 413 بصفحة HTML لا بغلاف أخطاء SocialAPI
+        if (mocks.upload.html) return new Response(mocks.upload.html, { status: mocks.upload.status, headers: { 'content-type': 'text/html' } });
+        return json(mocks.upload.status, mocks.upload.json);
+      }
+      if (p === '/v1/media/upload-url' && request.method === 'GET') return json(mocks.uploadUrl.status, mocks.uploadUrl.json);
+      if (/^\/v1\/media\/[^/]+\/verify$/.test(p) && request.method === 'POST') return json(mocks.verify.status, mocks.verify.json);
+      if (p === '/v1/media/storage' && request.method === 'GET') return json(mocks.storage.status, mocks.storage.json);
+      if (/^\/v1\/media\/[^/]+$/.test(p) && request.method === 'DELETE') return new Response(null, { status: mocks.deleteMedia });
       if (p === '/v1/posts' && request.method === 'POST') {
         if (mocks.createPost) {
           const r = mocks.createPost(call.body);
