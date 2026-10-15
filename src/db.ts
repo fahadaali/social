@@ -136,6 +136,35 @@ export async function remindersPaused(db: D1Database): Promise<boolean> {
   return v === '1' || v === 'true';
 }
 
+// أخطاء D1 العابرة التي توصي Cloudflare بإعادة المحاولة عندها (توثيق D1: Retry queries)
+const TRANSIENT_D1_ERRORS = ['Network connection lost', 'storage caused object to be reset', 'reset because its code was updated'];
+
+/** خطأ D1 عابر تصلحه إعادة المحاولة، لا خطأ في الاستعلام نفسه. */
+export function isTransientD1Error(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return TRANSIENT_D1_ERRORS.some((m) => err.message.includes(m));
+}
+
+/**
+ * يشغّل run، ويعيده مرة واحدة بعد waitMs إن فشل بخطأ D1 عابر وسمح canRetry بذلك.
+ * لا تُستعمل إلا لعمل تُعاد خطواته بلا أثر مكرر (مثل مهمة لا ترسل رسالتها إلا في آخرها).
+ */
+export async function retryTransientD1<T>(
+  run: () => Promise<T>,
+  canRetry: () => boolean,
+  waitMs: number,
+  onRetry: (err: unknown) => void = () => {},
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isTransientD1Error(err) || !canRetry()) throw err;
+    onRetry(err);
+    await new Promise((r) => setTimeout(r, waitMs));
+    return run();
+  }
+}
+
 export async function getState(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM state WHERE key = ?').bind(key).first<{ value: string | null }>();
   return row?.value ?? null;

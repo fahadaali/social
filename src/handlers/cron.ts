@@ -2,13 +2,14 @@
 
 import { claudeErrorMessage, ClaudeError } from '../claude.ts';
 import { collectPerformance, loadSnapshot, saveSnapshot } from '../analytics.ts';
-import { CRON_BUDGET_MS, makeCtx, type Ctx } from '../context.ts';
+import { CRON_BUDGET_MS, makeCtx, remaining, type Ctx } from '../context.ts';
 import {
   cleanupProcessedUpdates,
   countUpcomingScheduled,
   getState,
   listDraftsByStatus,
   remindersPaused,
+  retryTransientD1,
   setState,
   STATE_KEYS,
 } from '../db.ts';
@@ -34,6 +35,9 @@ const SNAPSHOT_MAX_AGE_DAYS = 7;
 // البحث في الويب قد يستغرق دقائق، ومهلة Cron في Cloudflare 15 دقيقة؛ نترك للخطة دقيقة بعد البحث
 const EVENTS_TASK_BUDGET_MS = 6 * 60_000;
 const PLAN_RESERVE_MS = 60_000;
+// إعادة المهمة بعد خطأ D1 عابر: انتظار قصير، ولا إعادة إن بقي أقل من دقيقة (يكفي التقرير وطلب Claude فيه)
+const TRANSIENT_RETRY_WAIT_MS = 5_000;
+const TRANSIENT_RETRY_MIN_REMAINING_MS = 60_000;
 const SUNDAY_EVENT_DAYS = 7;
 const MIDWEEK_EVENT_DAYS = 4;
 
@@ -186,12 +190,22 @@ export async function runScheduled(env: Env, cron: string): Promise<void> {
   }
   const ctx = makeCtx(env, Number(owner), task.budgetMs ?? CRON_BUDGET_MS);
   let failures: string[];
-  try {
+  // Cron لا يعيد المحاولة، فخطأ D1 عابر يُعاد له مرة واحدة إن بقي في المهلة ما يكفي.
+  // آمن لأن كل مهمة ترسل رسالتها في آخرها، وأخطاء المهمة اليومية تُجمع داخلها فلا تصل إلى هنا.
+  const attempt = async (): Promise<string[]> => {
     await ensureSchema(env.DB);
     ctx.env = await withSavedMode(env);
     // تعرضه /setup، فيُعرف من المتصفح أن المهام المجدولة تعمل
     await setState(env.DB, STATE_KEYS.lastCronAt, new Date().toISOString());
-    failures = await task.run(ctx);
+    return task.run(ctx);
+  };
+  try {
+    failures = await retryTransientD1(
+      attempt,
+      () => remaining(ctx) >= TRANSIENT_RETRY_MIN_REMAINING_MS,
+      TRANSIENT_RETRY_WAIT_MS,
+      (err) => console.warn(JSON.stringify({ evt: 'cron_transient_retry', task: task.name, err: errorSummary(err) })),
+    );
   } catch (err) {
     failures = [errorSummary(err)];
   }
