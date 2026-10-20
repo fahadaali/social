@@ -1,8 +1,9 @@
 // نقطة الدخول: fetch() لـ webhook تيليجرام، و scheduled() لمهام Cron (SPEC §2 و§4).
 
 import { ownerChat, secretMatches, webhookSecret } from './auth.ts';
-import { makeCtx, WEBHOOK_BUDGET_MS } from './context.ts';
+import { makeCtx, QUEUE_BUDGET_MS, WEBHOOK_BUDGET_MS } from './context.ts';
 import { markUpdateProcessed } from './db.ts';
+import { draftJobRetry, runDraftJob, type DraftJob } from './drafting.ts';
 import { ownerId, type Env } from './env.ts';
 import { handleCallback } from './handlers/callbacks.ts';
 import { errorSummary, runScheduled } from './handlers/cron.ts';
@@ -10,7 +11,8 @@ import { handleMessage } from './handlers/messages.ts';
 import { ensureSchema } from './migrations.ts';
 import { withSavedMode } from './mode.ts';
 import { handleSetup } from './setup.ts';
-import { sendMessage, type TgUpdate } from './telegram.ts';
+import { editMessageText, sendMessage, type TgUpdate } from './telegram.ts';
+import { retryKeyboard } from './preview.ts';
 
 const WEBHOOK_PATH = '/webhook';
 
@@ -46,6 +48,34 @@ async function processUpdate(env: Env, update: TgUpdate, chatId: number): Promis
   }
 }
 
+/**
+ * مستهلك طابور الصياغة (NOTES.md القسم 3). لا يُعاد العمل نفسه إن انقطع تنفيذه (تجاوز المهلة مثلاً)،
+ * حتى لا تُنشأ مسودة مكررة: المحاولة الثانية تُبلغ المالك فقط وتعرض زر إعادة المحاولة.
+ */
+async function processDraftJob(env: Env, job: DraftJob, attempts: number): Promise<void> {
+  // احتياط: الطابور لا يملؤه إلا الـ Worker نفسه، ولمحادثة المالك وحده
+  if (String(job.chatId) !== ownerId(env)) return;
+  const ctx = makeCtx(env, job.chatId, QUEUE_BUDGET_MS);
+  try {
+    if (attempts > 1) {
+      console.warn(JSON.stringify({ evt: 'draft_job_interrupted', kind: job.kind, attempts }));
+      await editMessageText(env, job.chatId, job.placeholderId, '❌ انقطعت الصياغة قبل أن تكتمل.', retryKeyboard(draftJobRetry(job)));
+      return;
+    }
+    await ensureSchema(env.DB);
+    ctx.env = await withSavedMode(env);
+    await runDraftJob(ctx, job);
+  } catch (err) {
+    // runDraftJob لا يرمي؛ هذا فشل قبله (قاعدة البيانات مثلاً)، فلا تبقى رسالة «جاري الصياغة…» معلّقة
+    console.error(JSON.stringify({ evt: 'draft_job_failed', kind: job.kind, summary: errorSummary(err) }));
+    try {
+      await editMessageText(env, job.chatId, job.placeholderId, '❌ تعذّرت الصياغة: حدث خطأ غير متوقع.', retryKeyboard(draftJobRetry(job)));
+    } catch {
+      // لا شيء آخر يمكن فعله
+    }
+  }
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
@@ -75,7 +105,16 @@ export default {
     return ok();
   },
 
+  async queue(batch, env): Promise<void> {
+    for (const msg of batch.messages) {
+      // زمن الانتظار في الطابور، ليُعرف من السجلات إن كان يؤخّر الصياغة
+      console.log(JSON.stringify({ evt: 'draft_job', kind: msg.body.kind, wait_ms: Date.now() - msg.timestamp.getTime(), attempts: msg.attempts }));
+      await processDraftJob(env, msg.body, msg.attempts);
+      msg.ack();
+    }
+  },
+
   async scheduled(controller, env): Promise<void> {
     await runScheduled(env, controller.cron);
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, DraftJob>;

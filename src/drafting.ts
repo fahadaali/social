@@ -137,6 +137,86 @@ export async function resendPreview(ctx: Ctx, draftId: number): Promise<void> {
   await showPreview(ctx, draft, idea);
 }
 
+// ---------- عمل الصياغة: يبدأ في الـ webhook وينتهي في الطابور (NOTES.md القسم 3) ----------
+
+/**
+ * ما يلزم لإكمال الصياغة بعد إرسال رسالة «جاري الصياغة…». يُرسل إلى الطابور، فتُصاغ المسودة بمهلة
+ * دقائق بدل 30 ثانية في waitUntil. وتبقى بقية التفاعلات في waitUntil، فلا تنتظر خلف صياغة طويلة.
+ */
+export type DraftJob = { chatId: number; placeholderId: number } & (
+  | { kind: 'formulate'; ideaId: number; angle?: string }
+  | { kind: 'regenerate'; draftId: number }
+  | { kind: 'revise'; draftId: number; notes: string }
+);
+
+/** زر «أعد المحاولة» لعمل صياغة. */
+export function draftJobRetry(job: DraftJob): string {
+  if (job.kind === 'formulate') return CB.retry('f', job.ideaId);
+  return CB.retry(job.kind === 'regenerate' ? 'g' : 'e', job.draftId);
+}
+
+/** يرسل العمل إلى الطابور، أو ينفّذه هنا إن لم يُربط الطابور (معاينات الفروع) أو رُفض الإرسال. */
+async function dispatch(ctx: Ctx, job: DraftJob): Promise<void> {
+  if (ctx.env.JOBS) {
+    try {
+      await ctx.env.JOBS.send(job);
+      return;
+    } catch (err) {
+      console.warn(JSON.stringify({ evt: 'enqueue_failed', kind: job.kind, err: err instanceof Error ? err.message.slice(0, 200) : 'unknown' }));
+    }
+  }
+  await runDraftJob(ctx, job);
+}
+
+/** يكمل الصياغة ويعرض المعاينة مكان رسالة «جاري الصياغة…». لا يرمي: الفشل يظهر فيها مع زر إعادة المحاولة. */
+export async function runDraftJob(ctx: Ctx, job: DraftJob): Promise<void> {
+  try {
+    if (job.kind === 'formulate') await finishFormulate(ctx, job);
+    else await finishRewrite(ctx, job);
+  } catch (err) {
+    await failPlaceholder(ctx, job.placeholderId, err, draftJobRetry(job));
+  }
+}
+
+async function finishFormulate(ctx: Ctx, job: Extract<DraftJob, { kind: 'formulate' }>): Promise<void> {
+  const idea = await getIdea(ctx.env.DB, job.ideaId);
+  if (!idea) {
+    await editMessageText(ctx.env, ctx.chatId, job.placeholderId, `لم أجد الفكرة #${job.ideaId}.`);
+    return;
+  }
+  const recent = await recentForPrompt(ctx.env);
+  const content = await generateChecked(ctx, [{ role: 'user', content: draftUser(ideaInput(idea), recent, job.angle) }], 'draft');
+  const draft = await insertDraft(ctx.env.DB, idea.id, content, defaultPlatforms(ctx.env));
+  if (idea.status === 'new') await setIdeaStatus(ctx.env.DB, idea.id, 'drafted');
+  await showPreview(ctx, draft, { ...idea, status: idea.status === 'new' ? 'drafted' : idea.status }, job.placeholderId);
+}
+
+/** صياغة جديدة أو تعديل وفق الملاحظات. المسودة تُقرأ من جديد لأنها قد تتغيّر وهي في الطابور. */
+async function finishRewrite(ctx: Ctx, job: Extract<DraftJob, { kind: 'regenerate' | 'revise' }>): Promise<void> {
+  const revise = job.kind === 'revise';
+  const unchanged = `تغيّرت حالة المسودة #${job.draftId} فلم ${revise ? 'تُعدَّل' : 'تُحدَّث'}.`;
+  const draft = await getDraft(ctx.env.DB, job.draftId);
+  if (!draft || !isEditable(draft)) {
+    await editMessageText(ctx.env, ctx.chatId, job.placeholderId, unchanged);
+    return;
+  }
+  const idea = draft.idea_id ? await getIdea(ctx.env.DB, draft.idea_id) : null;
+  const content = revise
+    ? await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, job.notes) }], 'revise', false)
+    : await generateChecked(
+        ctx,
+        [{ role: 'user', content: regenerateUser(ideaInput(idea, draft), draft, await recentForPrompt(ctx.env)) }],
+        'regenerate',
+      );
+  const updated = await replaceDraftContent(ctx.env.DB, draft.id, content);
+  if (!updated) {
+    await editMessageText(ctx.env, ctx.chatId, job.placeholderId, unchanged);
+    return;
+  }
+  if (revise) await deleteState(ctx.env.DB, reviseNotesKey(draft.id));
+  await showPreview(ctx, updated, idea, job.placeholderId);
+}
+
 /** «صُغها الآن» / «صُغها»: مسودة جديدة من فكرة، مع زاوية اختيارية من الخطة. */
 export async function formulateIdea(ctx: Ctx, ideaId: number, angle?: string): Promise<void> {
   const idea = await getIdea(ctx.env.DB, ideaId);
@@ -145,18 +225,10 @@ export async function formulateIdea(ctx: Ctx, ideaId: number, angle?: string): P
     return;
   }
   const placeholder = await sendMessage(ctx.env, ctx.chatId, `⏳ جاري الصياغة… (الفكرة #${idea.id})`);
-  try {
-    const recent = await recentForPrompt(ctx.env);
-    const content = await generateChecked(ctx, [{ role: 'user', content: draftUser(ideaInput(idea), recent, angle) }], 'draft');
-    const draft = await insertDraft(ctx.env.DB, idea.id, content, defaultPlatforms(ctx.env));
-    if (idea.status === 'new') await setIdeaStatus(ctx.env.DB, idea.id, 'drafted');
-    await showPreview(ctx, draft, { ...idea, status: idea.status === 'new' ? 'drafted' : idea.status }, placeholder.message_id);
-  } catch (err) {
-    await failPlaceholder(ctx, placeholder.message_id, err, CB.retry('f', idea.id));
-  }
+  await dispatch(ctx, { kind: 'formulate', chatId: ctx.chatId, placeholderId: placeholder.message_id, ideaId: idea.id, ...(angle ? { angle } : {}) });
 }
 
-async function loadEditable(ctx: Ctx, draftId: number): Promise<{ draft: Draft; idea: Idea | null } | null> {
+async function loadEditable(ctx: Ctx, draftId: number): Promise<Draft | null> {
   const draft = await getDraft(ctx.env.DB, draftId);
   if (!draft) {
     await sendMessage(ctx.env, ctx.chatId, `لم أجد المسودة #${draftId}.`);
@@ -166,52 +238,23 @@ async function loadEditable(ctx: Ctx, draftId: number): Promise<{ draft: Draft; 
     await sendMessage(ctx.env, ctx.chatId, `لا يمكن تعديل المسودة #${draftId} في حالتها الحالية.`);
     return null;
   }
-  const idea = draft.idea_id ? await getIdea(ctx.env.DB, draft.idea_id) : null;
-  return { draft, idea };
+  return draft;
 }
 
 /** 🔁 صياغة جديدة من الصفر بزاوية مختلفة. ترفع رقم النسخة. */
 export async function regenerateDraft(ctx: Ctx, draftId: number): Promise<void> {
-  const loaded = await loadEditable(ctx, draftId);
-  if (!loaded) return;
-  const { draft, idea } = loaded;
+  const draft = await loadEditable(ctx, draftId);
+  if (!draft) return;
   const placeholder = await sendMessage(ctx.env, ctx.chatId, `⏳ جاري صياغة جديدة للمسودة #${draft.id}…`);
-  try {
-    const recent = await recentForPrompt(ctx.env);
-    const content = await generateChecked(
-      ctx,
-      [{ role: 'user', content: regenerateUser(ideaInput(idea, draft), draft, recent) }],
-      'regenerate',
-    );
-    const updated = await replaceDraftContent(ctx.env.DB, draft.id, content);
-    if (!updated) {
-      await editMessageText(ctx.env, ctx.chatId, placeholder.message_id, `تغيّرت حالة المسودة #${draft.id} فلم تُحدَّث.`);
-      return;
-    }
-    await showPreview(ctx, updated, idea, placeholder.message_id);
-  } catch (err) {
-    await failPlaceholder(ctx, placeholder.message_id, err, CB.retry('g', draft.id));
-  }
+  await dispatch(ctx, { kind: 'regenerate', chatId: ctx.chatId, placeholderId: placeholder.message_id, draftId: draft.id });
 }
 
 /** ✏️ عدّل: إعادة الصياغة وفق ملاحظات المالك بنصها. ترفع رقم النسخة (معيار القبول 5). */
 export async function reviseDraft(ctx: Ctx, draftId: number, notes: string): Promise<void> {
-  const loaded = await loadEditable(ctx, draftId);
-  if (!loaded) return;
-  const { draft, idea } = loaded;
+  const draft = await loadEditable(ctx, draftId);
+  if (!draft) return;
   // نحفظ الملاحظات ليعمل زر «أعد المحاولة» دون إعادة كتابتها
   await setState(ctx.env.DB, reviseNotesKey(draft.id), notes);
   const placeholder = await sendMessage(ctx.env, ctx.chatId, `⏳ جاري تعديل المسودة #${draft.id} وفق ملاحظاتك…`);
-  try {
-    const content = await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, notes) }], 'revise', false);
-    const updated = await replaceDraftContent(ctx.env.DB, draft.id, content);
-    if (!updated) {
-      await editMessageText(ctx.env, ctx.chatId, placeholder.message_id, `تغيّرت حالة المسودة #${draft.id} فلم تُعدَّل.`);
-      return;
-    }
-    await deleteState(ctx.env.DB, reviseNotesKey(draft.id));
-    await showPreview(ctx, updated, idea, placeholder.message_id);
-  } catch (err) {
-    await failPlaceholder(ctx, placeholder.message_id, err, CB.retry('e', draft.id));
-  }
+  await dispatch(ctx, { kind: 'revise', chatId: ctx.chatId, placeholderId: placeholder.message_id, draftId: draft.id, notes });
 }

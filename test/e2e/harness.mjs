@@ -139,8 +139,9 @@ export function anthropicMessage(obj, stop = 'end_turn') {
  * migrate: true = الترحيلات مطبّقة ومسجّلة في d1_migrations كما يفعل wrangler، و false = قاعدة فارغة
  * (ينشئ الـ Worker جداوله بنفسه)، أو قائمة بأسماء الترحيلات المطبّقة مسبقاً.
  * withDb: false = بلا ربط D1 إطلاقاً (كـ Worker لم تُربط به قاعدة بعد).
+ * withQueue: false = بلا طابور الصياغة (كمعاينة فرع)، فتُصاغ المسودات في waitUntil.
  */
-export async function startBot({ vars = {}, migrate = true, withDb = true } = {}) {
+export async function startBot({ vars = {}, migrate = true, withDb = true, withQueue = true } = {}) {
   const calls = [];
   const mocks = {
     // (body, kind, n) => {status, json} | object (يُلف كرسالة ناجحة)؛ لغير طلبات البحث
@@ -414,6 +415,9 @@ export async function startBot({ vars = {}, migrate = true, withDb = true } = {}
           compatibilityDate: '2026-09-15',
           bindings,
           d1Databases: withDb ? { DB: 'e2e-db' } : {},
+          // كما في wrangler.toml
+          queueProducers: withQueue ? { JOBS: { queueName: 'social-jobs' } } : {},
+          queueConsumers: withQueue ? { 'social-jobs': { maxBatchSize: 1, maxBatchTimeout: 0, maxRetries: 1 } } : {},
           serviceBindings: { AI: 'ai-mock' },
           outboundService: outbound,
         },
