@@ -826,3 +826,25 @@ test('if Telegram fails after the post was created, the post id is kept (never m
     await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✅ نُشرت المسودة #1')), 5000, 'resolved by cron');
     assert.equal((await bot.row('SELECT status FROM drafts WHERE id = 1')).status, 'published');
   }));
+
+// ---------- طابور الصياغة (NOTES.md القسم 3) ----------
+
+const draftJobs = (bot) => bot.workerLogs.filter((l) => String(l.message).includes('"evt":"draft_job"'));
+
+test('drafting runs in the queue, so it is not bound by the 30-second waitUntil limit', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press(bot.button('🔁 صياغة جديدة'));
+    await bot.waitFor(() => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('📝 مسودة')).length >= 2, 15_000, 'regenerated');
+    assert.deepEqual(
+      draftJobs(bot).map((l) => JSON.parse(l.message).kind),
+      ['formulate', 'regenerate'],
+    );
+    assert.ok(!bot.workerLogs.some((l) => String(l.message).includes('enqueue_failed')));
+  }));
+
+test('without the queue binding, drafting still runs in waitUntil', () =>
+  withBot({ withQueue: false }, async (bot) => {
+    await makeDraft(bot);
+    assert.equal(draftJobs(bot).length, 0);
+  }));

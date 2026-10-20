@@ -4,6 +4,9 @@ import type { Env } from './env.ts';
 
 // ctx.waitUntil يمنح 30 ثانية بعد إرسال الرد لتيليجرام (SPEC §2)؛ نترك هامشاً للإبلاغ عن الفشل.
 export const WEBHOOK_BUDGET_MS = 27_000;
+// مستهلك طابور الصياغة له 15 دقيقة (NOTES.md القسم 3). 3 دقائق تكفي محاولتي Claude لمسودة وتصحيحها
+// (60 ثانية حداً لكل محاولة في claude.ts)، وتبقى قصيرة فلا تُترك رسالة «جاري الصياغة…» طويلاً.
+export const QUEUE_BUDGET_MS = 180_000;
 // مهام Cron لها مهلة أطول، ومع ذلك نبقيها قصيرة.
 export const CRON_BUDGET_MS = 120_000;
 

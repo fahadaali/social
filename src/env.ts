@@ -1,9 +1,16 @@
 // الأسرار والمتغيرات (SPEC §3) وقراءتها بأمان.
 
+import type { DraftJob } from './drafting.ts';
+
 export interface Env {
   DB: D1Database;
   /** Workers AI لتفريغ الرسائل الصوتية (وافق عليه المالك — NOTES.md القسم 6). */
   AI: Ai;
+  /**
+   * طابور الصياغة (NOTES.md القسم 3): تُصاغ فيه المسودات بمهلة دقائق بدل 30 ثانية في waitUntil.
+   * قد يغيب (معاينات الفروع)، فتُصاغ في waitUntil كما كان.
+   */
+  JOBS?: Queue<DraftJob>;
 
   // أسرار (من لوحة Cloudflare بنوع Secret، أو wrangler secret put)
   TELEGRAM_BOT_TOKEN: string;

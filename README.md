@@ -84,6 +84,7 @@
    - ثم **Save and Deploy**.
 3. قاعدة البيانات: ينشئ النشر قاعدة D1 باسم `social-db` ويربطها باسم `DB` تلقائياً، والجداول ينشئها الـ Worker بنفسه. لا معرّف تنسخه ولا أمر تشغّله.
    - **إن فشل البناء عند D1** (رسالة عن صلاحية D1 أو عن الربط `DB`): **Storage & Databases** ← **D1** ← **Create database** باسم `social-db`، ثم الـ Worker ← **Bindings** ← **Add binding** ← **D1 database**: الاسم `DB` والقاعدة `social-db`. بعدها **Deployments** ← **View build history** ← **Retry build**. النشرات التالية تحتفظ بهذا الربط.
+   - **طابور الصياغة:** ينشئ النشر أيضاً طابوراً باسم `social-jobs` ويربطه باسم `JOBS` (`NOTES.md` القسم 3). **إن فشل البناء عند الطابور** (رسالة مثل `Queue "social-jobs" does not exist`): **Storage & Databases** ← **Queues** ← **Create queue** باسم `social-jobs`، ثم **Retry build**. إلى أن ينجح البناء يبقى الإصدار السابق من البوت يعمل.
 4. الأسرار والمتغيرات: الـ Worker ← **Settings** ← **Variables and Secrets** ← **Add**، ثم **Deploy**:
 
    | الاسم | النوع | القيمة |
@@ -163,7 +164,7 @@ npm run check       # الكل
 ## البنية
 
 ```
-src/index.ts            fetch() للـ webhook و /setup + scheduled() للـ Cron
+src/index.ts            fetch() للـ webhook و /setup + queue() لطابور الصياغة + scheduled() للـ Cron
 src/auth.ts             التحقق من السر (الصريح أو المشتق من التوكن) والمالك
 src/setup.ts            صفحة /setup: فحص الإعداد وربط تيليجرام من المتصفح
 src/schema.ts · migrations.ts   تطبيق ترحيلات D1 من داخل الـ Worker (متوافق مع wrangler)

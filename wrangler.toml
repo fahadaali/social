@@ -28,6 +28,20 @@ migrations_dir = "migrations"
 [ai]
 binding = "AI"
 
+# طابور الصياغة (NOTES.md القسم 3): بعد رسالة «جاري الصياغة…» تُصاغ المسودة في الطابور بمهلة دقائق
+# بدل 30 ثانية في waitUntil. يُنشئه النشر تلقائياً إن لم يوجد (README «إن فشل البناء عند الطابور»).
+# عمل واحد في كل دفعة وبلا انتظار تجميع، فلا تتأخر الصياغة. المحاولة الثانية (إن انقطع التنفيذ)
+# لا تعيد الصياغة بل تُبلغ المالك، حتى لا تُنشأ مسودة مكررة (src/index.ts).
+[[queues.producers]]
+binding = "JOBS"
+queue = "social-jobs"
+
+[[queues.consumers]]
+queue = "social-jobs"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 1
+
 # توقيت Cron بـ UTC فقط؛ الرياض = UTC+3 بدون توقيت صيفي (4 مهام؛ حد الخطة المجانية 5 للحساب كله).
 # أيام الأسبوع بأسمائها: ترقيم Cloudflare يبدأ من 1 = الأحد، لا 0 (NOTES.md القسم 2.13).
 # يجب أن تطابق src/schedule.ts:
