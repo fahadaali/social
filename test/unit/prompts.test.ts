@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parseClassify, classifySchema } from '../../src/prompts/classify.ts';
 import { DRAFT_SCHEMA } from '../../src/prompts/draft.ts';
+import { reviseUser } from '../../src/prompts/revise.ts';
 import { parsePlan, planSchema } from '../../src/prompts/plan.ts';
 import {
   isEffectivelyEmpty,
@@ -84,4 +85,16 @@ test('parsePlan keeps at most 3, maps unknown ids to new topics and skips duplic
   });
   assert.deepEqual(out.map((s) => [s.idea_id, s.angle]), [[1, 'زاوية 1'], [null, 'جديد'], [2, 'زاوية 2']]);
   assert.throws(() => parse({ suggestions: [] }));
+});
+
+test('reviseUser asks for a visible change, covers all platforms, and lists earlier notes', () => {
+  const current = { x_segments: ['أ'], linkedin_text: 'ب', snap_script: ['ج'], needs_visual: false, visual_brief: null, notes: null };
+  const first = reviseUser(null, current, 'الصياغة تبدو آلية');
+  assert.match(first, /إعادة المسودة كما هي، أو بتبديل كلمة بمرادفها، خطأ/);
+  assert.match(first, /فأعد كتابة كل جملة بعبارة جديدة/);
+  assert.match(first, /فهي تنطبق على X ولينكدن وسناب جميعاً/);
+  assert.doesNotMatch(first, /<previous_notes>/);
+  const third = reviseUser(null, current, 'غيّرها', ['الصياغة تبدو آلية', 'ما تغيّر شيء']);
+  assert.match(third, /<previous_notes>\n1\. الصياغة تبدو آلية\n2\. ما تغيّر شيء\n<\/previous_notes>/);
+  assert.ok(third.indexOf('<previous_notes>') < third.indexOf('<owner_notes>'));
 });

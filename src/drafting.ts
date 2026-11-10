@@ -6,6 +6,7 @@ import { remaining, type Ctx } from './context.ts';
 import {
   deleteState,
   getDraft,
+  getJsonState,
   getIdea,
   insertDraft,
   recentPublished,
@@ -19,13 +20,18 @@ import {
 import { accountId, draftModel, PLATFORMS, type Env, type Platform } from './env.ts';
 import { CB, isEditable, previewKeyboard, renderPreview, retryKeyboard } from './preview.ts';
 import { DRAFT_MAX_TOKENS, DRAFT_SCHEMA, draftUser, fixViolationsTurn, regenerateUser, type IdeaInput, type RecentPost } from './prompts/draft.ts';
-import { reviseUser } from './prompts/revise.ts';
+import { REVISE_HISTORY_MAX, reviseUser } from './prompts/revise.ts';
 import { writerSystemPrompt } from './prompts/shared.ts';
 import { clearKeyboard, editMessageText, sendMessage } from './telegram.ts';
-import { checkStyle } from './style.ts';
-import { checkDraftLimits, parseDraftContent, type DraftContent } from './text.ts';
+import { checkStyle, requestedPhrases, similarity } from './style.ts';
+import { checkDraftLimits, parseDraftContent, type DraftContent, type Violation } from './text.ts';
 
 export const reviseNotesKey = (draftId: number) => `revise_notes:${draftId}`;
+/** ملاحظات المالك السابقة على المسودة، ليعرف النموذج أنه طلب التعديل من قبل. */
+export const reviseHistoryKey = (draftId: number) => `revise_history:${draftId}`;
+
+/** تعديل يبقي النص بهذا التشابه أو أكثر يُعدّ إعادة للمسودة كما هي (src/style.ts similarity). */
+export const UNCHANGED_SIMILARITY = 0.95;
 
 /** المنصات المفعّلة افتراضياً: ما ضُبط له معرّف حساب، أو كلتاهما إن لم يُضبط شيء بعد. */
 export function defaultPlatforms(env: Env): Platform[] {
@@ -47,21 +53,32 @@ function callWriter(ctx: Ctx, messages: ClaudeMessage[], label: string): Promise
   });
 }
 
-/** الأولوية لمخالفات الطول المانعة للنشر، ثم لمخالفات الأسلوب. الأقل أفضل. */
-const score = (c: DraftContent, style: boolean) =>
-  checkDraftLimits(c).filter((v) => v.hard).length * 100 + (style ? checkStyle(c).length : 0);
+interface CheckOptions {
+  /** عبارات ممنوعة طلبها المالك بنصه في ملاحظاته، فلا يُعاد الطلب بسببها (تبقى تنبيهاً في المعاينة). */
+  allowed?: readonly string[];
+  /** مخالفات خاصة بالمهمة (مثل تعديل لم يغيّر شيئاً)، تُعامل كمخالفات الأسلوب. */
+  extra?: (c: DraftContent) => Violation[];
+}
+
+/** مخالفات تستدعي إعادة الطلب: الطول المانع للنشر، والأسلوب، وما تضيفه المهمة. */
+function retryViolations(c: DraftContent, opts: CheckOptions): Violation[] {
+  return [...checkStyle(c, opts.allowed), ...(opts.extra?.(c) ?? [])];
+}
+
+/** الأولوية لمخالفات الطول المانعة للنشر، ثم لبقية المخالفات. الأقل أفضل. */
+const score = (c: DraftContent, opts: CheckOptions) =>
+  checkDraftLimits(c).filter((v) => v.hard).length * 100 + retryViolations(c, opts).length;
 
 /**
- * توليد ثم تحقق برمجي (SPEC §10): الأطوال، والعبارات الممنوعة في دليل الأسلوب.
- * عند مخالفة تمنع النشر (تغريدة أطول من حد X مثلاً) أو عبارة ممنوعة، يُعاد الطلب مرة واحدة مع ذكر الخطأ
- * — إن كان الوقت المتبقي يكفي، وإلا تُعرض المسودة مع التنبيه.
- * style=false في التعديل وفق الملاحظات: لا يُعاد الطلب بسبب الأسلوب حتى لا يخالف ما طلبه المالك بنصه.
+ * توليد ثم تحقق برمجي (SPEC §10): الأطوال، والعبارات الممنوعة في دليل الأسلوب، وما تضيفه المهمة.
+ * عند مخالفة تمنع النشر (تغريدة أطول من حد X مثلاً) أو عبارة ممنوعة أو تعديل لم يغيّر النص،
+ * يُعاد الطلب مرة واحدة مع ذكر الخطأ — إن كان الوقت المتبقي يكفي، وإلا تُعرض المسودة مع التنبيه.
  */
-async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: string, style = true): Promise<DraftContent> {
+async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: string, opts: CheckOptions = {}): Promise<DraftContent> {
   const started = Date.now();
   const first = await callWriter(ctx, messages, label);
   const violations = checkDraftLimits(first);
-  const styleViolations = style ? checkStyle(first) : [];
+  const styleViolations = retryViolations(first, opts);
   if (!violations.some((v) => v.hard) && styleViolations.length === 0) return first;
 
   const firstDuration = Date.now() - started;
@@ -72,7 +89,7 @@ async function generateChecked(ctx: Ctx, messages: ClaudeMessage[], label: strin
   try {
     const turn = fixViolationsTurn(first, [...violations, ...styleViolations]);
     const second = await callWriter(ctx, [...messages, ...turn], `${label}_fix`);
-    return score(second, style) <= score(first, style) ? second : first;
+    return score(second, opts) <= score(first, opts) ? second : first;
   } catch (err) {
     console.warn(JSON.stringify({ evt: 'fix_failed', label, err: err instanceof Error ? err.message : 'unknown' }));
     return first;
@@ -191,6 +208,26 @@ async function finishFormulate(ctx: Ctx, job: Extract<DraftJob, { kind: 'formula
   await showPreview(ctx, draft, { ...idea, status: idea.status === 'new' ? 'drafted' : idea.status }, job.placeholderId);
 }
 
+/** تعديل أعاد المسودة كما هي تقريباً: ملاحظات المالك لم تُنفَّذ. */
+function unchangedViolation(before: DraftContent, after: DraftContent): Violation[] {
+  const sim = similarity(before, after);
+  if (sim < UNCHANGED_SIMILARITY) return [];
+  return [
+    {
+      hard: false,
+      message: `المسودة المعادة تطابق المسودة الحالية بنسبة ${Math.round(sim * 100)}%، فالأرجح أن ملاحظات المالك لم تُنفَّذ. نفّذها الآن تنفيذاً يظهر في النص، وإن كانت عن الصياغة أو الأسلوب فأعد كتابة الجمل نفسها بعبارات وبناء جديدين. أما إن كانت تطلب تغييراً صغيراً محدداً ونفّذته، فأبقِ المسودة كما هي.`,
+    },
+  ];
+}
+
+/** إن بقي النص كما هو بعد إعادة المحاولة، يُنبَّه المالك في المعاينة بدل أن يظن أن التعديل تم. */
+function markUnchanged(before: DraftContent, after: DraftContent): DraftContent {
+  const sim = similarity(before, after);
+  if (sim < UNCHANGED_SIMILARITY) return after;
+  const warn = `تغيّر النص قليلاً جداً عن النسخة السابقة (تطابق ${Math.round(sim * 100)}%). إن لم يكن هذا ما طلبته، فجرّب «🔁 صياغة جديدة» أو اذكر الموضع المطلوب تغييره.`;
+  return { ...after, notes: after.notes ? `${warn}\n${after.notes}` : warn };
+}
+
 /** صياغة جديدة أو تعديل وفق الملاحظات. المسودة تُقرأ من جديد لأنها قد تتغيّر وهي في الطابور. */
 async function finishRewrite(ctx: Ctx, job: Extract<DraftJob, { kind: 'regenerate' | 'revise' }>): Promise<void> {
   const revise = job.kind === 'revise';
@@ -201,8 +238,15 @@ async function finishRewrite(ctx: Ctx, job: Extract<DraftJob, { kind: 'regenerat
     return;
   }
   const idea = draft.idea_id ? await getIdea(ctx.env.DB, draft.idea_id) : null;
+  const history = revise ? ((await getJsonState<string[]>(ctx.env.DB, reviseHistoryKey(draft.id))) ?? []) : [];
   const content = revise
-    ? await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, job.notes) }], 'revise', false)
+    ? markUnchanged(
+        draft,
+        await generateChecked(ctx, [{ role: 'user', content: reviseUser(idea, draft, job.notes, history) }], 'revise', {
+          allowed: requestedPhrases(job.notes),
+          extra: (c) => unchangedViolation(draft, c),
+        }),
+      )
     : await generateChecked(
         ctx,
         [{ role: 'user', content: regenerateUser(ideaInput(idea, draft), draft, await recentForPrompt(ctx.env)) }],
@@ -213,7 +257,11 @@ async function finishRewrite(ctx: Ctx, job: Extract<DraftJob, { kind: 'regenerat
     await editMessageText(ctx.env, ctx.chatId, job.placeholderId, unchanged);
     return;
   }
-  if (revise) await deleteState(ctx.env.DB, reviseNotesKey(draft.id));
+  if (revise) {
+    await deleteState(ctx.env.DB, reviseNotesKey(draft.id));
+    const next = [...history, job.notes].slice(-REVISE_HISTORY_MAX);
+    await setState(ctx.env.DB, reviseHistoryKey(draft.id), JSON.stringify(next));
+  }
   await showPreview(ctx, updated, idea, job.placeholderId);
 }
 
