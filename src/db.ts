@@ -2,6 +2,7 @@
 
 import { PLATFORMS, type Platform } from './env.ts';
 import type { DraftContent } from './text.ts';
+import type { StyleReview } from './prompts/review.ts';
 
 export type IdeaStatus = 'new' | 'drafted' | 'published' | 'archived';
 /** plan: موضوع جديد من الخطة، event: موضوع مبني على حدث من بحث الويب (NOTES.md القسم 11). */
@@ -32,6 +33,8 @@ export interface Draft extends DraftContent {
   published_at: string | null;
   telegram_message_id: number | null;
   revision: number;
+  /** نتيجة مدقّق الأسلوب لهذه النسخة (null للمسودات الأقدم أو إن تعذّرت المراجعة). */
+  style_review: StyleReview | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +59,7 @@ interface DraftRow {
   published_at: string | null;
   telegram_message_id: number | null;
   revision: number;
+  style_review?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -67,6 +71,17 @@ function jsonArray(value: string | null): string[] {
     return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
   } catch {
     return [];
+  }
+}
+
+/** يقرأ عمود style_review؛ القيمة التالفة تُعامل كأن لا مراجعة. */
+function parseStoredReview(v: string | null | undefined): StyleReview | null {
+  if (!v) return null;
+  try {
+    const r = JSON.parse(v) as StyleReview;
+    return typeof r?.passed === 'number' && typeof r.total === 'number' && Array.isArray(r.failed) ? r : null;
+  } catch {
+    return null;
   }
 }
 
@@ -91,6 +106,7 @@ function rowToDraft(r: DraftRow): Draft {
     published_at: r.published_at,
     telegram_message_id: r.telegram_message_id,
     revision: r.revision,
+    style_review: parseStoredReview(r.style_review),
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -280,11 +296,12 @@ export async function insertDraft(
   ideaId: number | null,
   content: DraftContent,
   platforms: Platform[],
+  review: StyleReview | null = null,
 ): Promise<Draft> {
   const row = await db
     .prepare(
-      `INSERT INTO drafts (idea_id, x_segments, linkedin_text, snap_script, needs_visual, visual_brief, notes, platforms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO drafts (idea_id, x_segments, linkedin_text, snap_script, needs_visual, visual_brief, notes, platforms, style_review)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .bind(
       ideaId,
@@ -295,6 +312,7 @@ export async function insertDraft(
       content.visual_brief,
       content.notes,
       JSON.stringify(platforms),
+      review ? JSON.stringify(review) : null,
     )
     .first<DraftRow>();
   if (!row) throw new Error('insert draft returned nothing');
@@ -307,11 +325,16 @@ export async function getDraft(db: D1Database, id: number): Promise<Draft | null
 }
 
 /** يستبدل المحتوى ويرفع revision، بشرط أن تكون المسودة ما تزال قابلة للتعديل. */
-export async function replaceDraftContent(db: D1Database, id: number, content: DraftContent): Promise<Draft | null> {
+export async function replaceDraftContent(
+  db: D1Database,
+  id: number,
+  content: DraftContent,
+  review: StyleReview | null = null,
+): Promise<Draft | null> {
   const row = await db
     .prepare(
       `UPDATE drafts SET x_segments = ?, linkedin_text = ?, snap_script = ?, needs_visual = ?, visual_brief = ?,
-         notes = ?, revision = revision + 1, updated_at = datetime('now')
+         notes = ?, style_review = ?, revision = revision + 1, updated_at = datetime('now')
        WHERE id = ? AND status IN ('pending', 'failed') RETURNING *`,
     )
     .bind(
@@ -321,6 +344,7 @@ export async function replaceDraftContent(db: D1Database, id: number, content: D
       content.needs_visual ? 1 : 0,
       content.visual_brief,
       content.notes,
+      review ? JSON.stringify(review) : null,
       id,
     )
     .first<DraftRow>();

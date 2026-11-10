@@ -10,6 +10,7 @@ import {
   type MessageEntity,
 } from './telegram.ts';
 import { checkStyle } from './style.ts';
+import { reviewLine } from './prompts/review.ts';
 import { X_MAX_WEIGHTED, checkDraftLimits, xWeightedLength } from './text.ts';
 import { formatRiyadh, parseUtc, type ScheduleOption } from './time.ts';
 
@@ -126,6 +127,7 @@ function footerSection(d: Draft): string | null {
     lines.push(`🖼 يُقترح تصميم${brief} (صمّمه في Claude Design وأرسله هنا)`);
   }
   if (d.notes) lines.push(`🔎 للتحقق: ${d.notes}`);
+  if (d.style_review) lines.push(reviewLine(d.style_review));
   for (const v of [...checkDraftLimits(d), ...checkStyle(d)]) lines.push(`⚠️ ${v.message}`);
   const status = statusLine(d);
   if (status) lines.push(status);
