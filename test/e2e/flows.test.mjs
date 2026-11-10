@@ -156,7 +156,7 @@ test('a banned stock phrase triggers one corrective retry that names it', () =>
     assert.doesNotMatch(preview, /عبارات ممنوعة/);
   }));
 
-test('revising per owner notes is not retried for style; a remaining phrase is only flagged in the preview', () =>
+test('a banned phrase the owner asked for by name is not retried for style, only flagged in the preview', () =>
   withBot({}, async (bot) => {
     await makeDraft(bot);
     const before = bot.anthropic('draft').length;
@@ -167,6 +167,65 @@ test('revising per owner notes is not retried for style; a remaining phrase is o
     const preview = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 2)')), 15_000, 'revised preview');
     assert.equal(bot.anthropic('draft').length, before + 1);
     assert.match(preview.body.text, /⚠️ عبارات ممنوعة في X: «في الختام»/);
+  }));
+
+test('a revision that returns the draft unchanged is retried once with a demand to apply the notes', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    const before = bot.anthropic('draft').length;
+    await bot.press(bot.button('✏️ عدّل'));
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✏️ اكتب ملاحظاتك على المسودة #1')), 5000);
+    bot.mocks.anthropic.push(
+      () => draftOutput(),
+      () => draftOutput({ x_segments: ['رأيت مجلساً يوقّع على كل شيء، فلم يقرر شيئاً.'], snap_script: ['مجلس يوقّع\nولا يقرر', 'اسأل: من يقرر؟', 'ثم اكتبها'] }),
+    );
+    await bot.sendText('الصياغة تبدو مكتوبة آلياً، غيّرها');
+    const preview = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 2)')), 15_000, 'revised preview');
+    const calls = bot.anthropic('draft');
+    assert.equal(calls.length, before + 2);
+    const retry = calls.at(-1).body.messages;
+    assert.match(retry[2].content, /تطابق المسودة الحالية بنسبة 100%/);
+    assert.match(preview.body.text, /رأيت مجلساً يوقّع على كل شيء/);
+    assert.doesNotMatch(preview.body.text, /تغيّر النص قليلاً جداً/);
+  }));
+
+test('a revision still unchanged after the retry is flagged in the preview, and the next revision sees earlier notes', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    await bot.press(bot.button('✏️ عدّل'));
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✏️ اكتب ملاحظاتك على المسودة #1')), 5000);
+    bot.mocks.anthropic.push(() => draftOutput(), () => draftOutput());
+    await bot.sendText('غيّر الصياغة');
+    const preview = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 2)')), 15_000, 'revised preview');
+    assert.match(preview.body.text, /تغيّر النص قليلاً جداً عن النسخة السابقة \(تطابق 100%\)/);
+    assert.deepEqual(JSON.parse((await bot.row("SELECT value FROM state WHERE key = 'revise_history:1'")).value), ['غيّر الصياغة']);
+
+    await bot.settle();
+    await bot.press(bot.button('✏️ عدّل'));
+    await bot.waitFor(() => bot.texts().filter((t) => t.startsWith('✏️ اكتب ملاحظاتك على المسودة #1')).length === 2, 5000);
+    bot.mocks.anthropic.push(() => draftOutput({ x_segments: ['نسخة ثالثة مختلفة فعلاً'] }));
+    await bot.sendText('ما تغيّر شيء');
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 3)')), 15_000, 'third preview');
+    const third = bot.anthropic('draft').at(-1).body.messages[0].content;
+    assert.match(third, /<previous_notes>\n1\. غيّر الصياغة\n<\/previous_notes>/);
+    assert.match(third, /<owner_notes>\nما تغيّر شيء\n<\/owner_notes>/);
+  }));
+
+test('a revision that brings in a banned phrase the owner did not ask for is retried for style', () =>
+  withBot({}, async (bot) => {
+    await makeDraft(bot);
+    const before = bot.anthropic('draft').length;
+    await bot.press(bot.button('✏️ عدّل'));
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('✏️ اكتب ملاحظاتك على المسودة #1')), 5000);
+    bot.mocks.anthropic.push(
+      () => draftOutput({ x_segments: ['في عالم اليوم المتسارع، الحوكمة قرار'] }),
+      () => draftOutput({ x_segments: ['الحوكمة قرار يُتخذ في وقته'] }),
+    );
+    await bot.sendText('اجعل الافتتاحية أوضح');
+    const preview = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.includes('(نسخة 2)')), 15_000, 'revised preview');
+    assert.equal(bot.anthropic('draft').length, before + 2);
+    assert.match(bot.anthropic('draft').at(-1).body.messages[2].content, /عبارات ممنوعة في X: «في عالم اليوم»/);
+    assert.match(preview.body.text, /الحوكمة قرار يُتخذ في وقته/);
   }));
 
 test('Anthropic overload: one retry after ~2s, then a clear message with a «أعد المحاولة» button', () =>
@@ -202,7 +261,8 @@ test('acceptance 5: ✏️ edit with notes revises only per the notes and bumps 
     assert.match(preview.body.text, /نسخة معدّلة بناء على الملاحظات/);
     const revise = bot.anthropic('draft').at(-1);
     assert.match(revise.body.messages[0].content, /<owner_notes>\nاجعل الافتتاحية أقصر واحذف الإيموجي\n<\/owner_notes>/);
-    assert.match(revise.body.messages[0].content, /غيّر فقط ما تطلبه الملاحظات/);
+    assert.match(revise.body.messages[0].content, /نفّذ كل ما في الملاحظات تنفيذاً يظهر في النص/);
+    assert.doesNotMatch(revise.body.messages[0].content, /<previous_notes>/);
     const d = await bot.row('SELECT revision FROM drafts WHERE id = 1');
     assert.equal(d.revision, 1);
     assert.equal((await bot.row("SELECT COUNT(*) AS n FROM state WHERE key = 'awaiting_edit'")).n, 0);

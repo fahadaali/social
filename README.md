@@ -159,6 +159,17 @@ npm run check       # الكل
 ```
 لا تصل الاختبارات إلى أي خدمة خارجية. للتشغيل المحلي بـ `npm run dev` ضع الأسرار والمتغيرات في ملف `.dev.vars`، وهو مستثنى من git. الجداول تُنشأ محلياً تلقائياً أيضاً. ربط Workers AI يعمل عن بُعد دائماً، فيحتاج `npx wrangler login`.
 
+### قياس الأسلوب
+
+بعد كل صياغة أو تعديل يراجع مدقّق الأسلوب المسودة بسبعة بنود مأخوذة من دليل الأسلوب: موقف واضح، ومثال من الممارسة، وخاص بالمجال، وافتتاحية مباشرة، وخاتمة بلا تلخيص، وبلا تراكيب آلية، وصوت الممارس. إن سقط بند أُعيدت الكتابة مرة واحدة بالبنود الساقطة، وتظهر الدرجة في المعاينة (`🧭 الأسلوب: 6/7، لم يتحقق: …`). يضيف طلبين إلى أربعة لكل مسودة؛ لإيقافه اضبط المتغير `STYLE_REVIEW` على `off` في Cloudflare.
+
+لمعرفة أثر أي تعديل في دليل الأسلوب أو التعليمات بالأرقام، شغّل مجموعة الاختبار الثابتة (`eval/ideas.md`) قبل التعديل وبعده:
+
+```sh
+ANTHROPIC_API_KEY='sk-ant-...' npm run eval:style -- --label "قبل تعديل الدليل"
+```
+يطبع درجة كل فكرة (المسودة الأولى والنهائية) ونسبة النجاح في كل بند، ويقارن بآخر تشغيل محفوظ في `eval/results/`. قرابة 20 إلى 50 طلباً للمجموعة كاملة. `--only 1,4` لتجربة أفكار بعينها (لا يُحفظ)، و`--model` لنموذج غير `CLAUDE_MODEL`.
+
 النشر من الطرفية بدل GitHub (اختياري): `npx wrangler login` ثم `npm run deploy`، والأسرار بـ `npx wrangler secret put <الاسم>`. أما `scripts/set-webhook.sh` فيحتاج `TELEGRAM_WEBHOOK_SECRET` مضبوطاً صراحةً بالقيمة نفسها في Cloudflare؛ صفحة `/setup` أسهل.
 
 ## البنية
@@ -181,7 +192,7 @@ src/events.ts           بحث الويب عن الأحداث لخطة الأح�
 src/managing.ts         تغيير موعد المجدول وإلغاؤه، وإعادة محاولة الجزئي، والتحقق من الحالة
 src/deleting.ts         الحذف النهائي: مسودة، فكرة، أفكار البنك كلها، المعلّقة كلها
 src/mode.ts             /mode: وضع التجربة من البوت
-src/style.ts            فحص العبارات الممنوعة في دليل الأسلوب
+src/style.ts            فحص العبارات الممنوعة في دليل الأسلوب، وتشابه نسختين من مسودة
 src/status.ts           /queue · /usage · /pause · /resume
 src/backup.ts           /export
 src/menu.ts             لوحة الأزرار الثابتة وقائمة الأوامر
@@ -189,9 +200,10 @@ src/analytics.ts        جمع المقاييس، أداء المحاور، لق
 src/reporting.ts        /stats والتقرير الأسبوعي
 src/voice.ts            تفريغ الرسائل الصوتية (Whisper في Workers AI)
 src/handlers/           messages · callbacks · cron
-src/prompts/            classify · draft · revise · plan · events · report · shared
-migrations/             0001_init.sql (من SPEC حرفياً) + 0002_draft_notes.sql
+src/prompts/            classify · draft · revise · review (مدقّق الأسلوب) · plan · events · report · shared
+migrations/             0001_init.sql (من SPEC حرفياً) + 0002 إلى 0004
 config/                 voice.md · pillars.md (يعبّئهما المالك)
-scripts/                set-webhook.sh · socialapi-check.mjs
+scripts/                set-webhook.sh · socialapi-check.mjs · style-eval.ts (قياس الأسلوب)
+eval/                   ideas.md (أفكار الاختبار الثابتة) · results/
 test/                   unit/ · e2e/
 ```

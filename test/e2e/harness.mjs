@@ -52,11 +52,19 @@ function schemaKind(body) {
   if ('x_segments' in props) return 'draft';
   if ('suggestions' in props) return 'plan';
   if ('headline' in props) return 'report';
+  if ('checks' in props) return 'review';
   if ('summary' in props) return 'classify';
   return 'unknown';
 }
 
+/** رد مدقّق الأسلوب: كل البنود ناجحة إلا ما في failed ({معرّف: دليل}). */
+export function reviewOutput(failed = {}) {
+  const ids = ['stance', 'practice', 'specific', 'opening', 'ending', 'constructions', 'voice'];
+  return { checks: Object.fromEntries(ids.map((id) => [id, id in failed ? { pass: false, evidence: failed[id] } : { pass: true, evidence: 'متحقق' }])) };
+}
+
 function defaultAnthropic(body, kind) {
+  if (kind === 'review') return reviewOutput();
   if (kind === 'classify') {
     const allowed = body.output_config.format.schema.properties.pillar.enum;
     return { pillar: allowed ? allowed[0] : 'الحوكمة', summary: 'ملخص قصير للفكرة' };
@@ -148,6 +156,8 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
     anthropic: [],
     // طلبات بحث الويب: (body, n) => {status, json} | رسالة كاملة؛ الافتراضي searchMessage()
     search: [],
+    // مدقّق الأسلوب: (body, n) => {status, json} | object؛ الافتراضي reviewOutput() (كل البنود ناجحة)
+    review: [],
     usage: { posts_used: 4, posts_limit: 10, period_end: '2026-10-15T00:00:00Z' },
     // GET /v1/accounts؛ الافتراضي يطابق SOCIALAPI_X_ACCOUNT_ID و SOCIALAPI_LINKEDIN_ACCOUNT_ID
     accounts: {
@@ -259,6 +269,12 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
         const out = custom ? custom(call.body, n) : searchMessage();
         if (out && typeof out.status === 'number') return json(out.status, out.json);
         return json(200, out);
+      }
+      if (kind === 'review') {
+        const customReview = mocks.review.shift();
+        const out = customReview ? customReview(call.body, n) : reviewOutput();
+        if (out && typeof out.status === 'number') return json(out.status, out.json);
+        return json(200, anthropicMessage(out));
       }
       const custom = mocks.anthropic.shift();
       const out = custom ? custom(call.body, kind, n) : defaultAnthropic(call.body, kind);

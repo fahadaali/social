@@ -30,6 +30,8 @@ export interface Env {
   SOCIALAPI_LINKEDIN_ACCOUNT_ID?: string;
   /** غيابه = وضع التجربة مفعّل (الافتراض الآمن). */
   DRY_RUN?: string;
+  /** مدقّق الأسلوب بعد كل صياغة؛ off لإيقافه. غيابه = مفعّل. */
+  STYLE_REVIEW?: string;
 
   // متغيرات لها قيم في [vars] بـ wrangler.toml
   CLAUDE_MODEL: string;
@@ -60,6 +62,9 @@ export const reminderAfterDays = (env: Env): number => positiveInt(env.REMINDER_
 export const monthlyPostLimit = (env: Env): number => positiveInt(env.MONTHLY_POST_LIMIT, 10);
 export const draftModel = (env: Env): string => str(env.CLAUDE_MODEL) || 'claude-sonnet-5';
 export const fastModel = (env: Env): string => str(env.CLAUDE_MODEL_FAST) || 'claude-haiku-4-5-20251001';
+
+/** مدقّق الأسلوب مفعّل ما لم يُضبط STYLE_REVIEW على off. */
+export const styleReviewEnabled = (env: Env): boolean => str(env.STYLE_REVIEW).toLowerCase() !== 'off';
 
 export type Platform = 'x' | 'linkedin';
 export const PLATFORMS: readonly Platform[] = ['x', 'linkedin'];

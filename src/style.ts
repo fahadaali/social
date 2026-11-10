@@ -61,12 +61,20 @@ export function bannedIn(text: string): string[] {
   return BANNED_PATTERNS.filter((p) => p.re.test(t)).map((p) => p.label);
 }
 
+/** العبارات الممنوعة التي ذكرها المالك بنصها في ملاحظاته (ولو بين علامات تنصيص)، فهو يريدها. */
+export function requestedPhrases(notes: string): string[] {
+  return bannedIn(notes.replace(/[«»"'“”‘’()[\]]/gu, ' '));
+}
+
 function hashtagCount(text: string): number {
   return (text.match(/(^|\s)#[\p{L}\p{N}_]+/gu) ?? []).length;
 }
 
-/** مخالفات الأسلوب في المسودة (كلها غير مانعة للنشر)، مجمّعة بحسب المنصة. */
-export function checkStyle(c: DraftContent): Violation[] {
+/**
+ * مخالفات الأسلوب في المسودة (كلها غير مانعة للنشر)، مجمّعة بحسب المنصة.
+ * allowed: عبارات طلبها المالك بنصه في ملاحظاته، فلا تُعدّ مخالفة يُعاد الطلب بسببها.
+ */
+export function checkStyle(c: DraftContent, allowed: readonly string[] = []): Violation[] {
   const v: Violation[] = [];
   const parts: Array<[string, string]> = [
     ['X', c.x_segments.join('\n\n')],
@@ -74,10 +82,50 @@ export function checkStyle(c: DraftContent): Violation[] {
     ['سناب', c.snap_script.join('\n\n')],
   ];
   for (const [where, text] of parts) {
-    const found = bannedIn(text);
+    const found = bannedIn(text).filter((f) => !allowed.includes(f));
     if (found.length) v.push({ hard: false, message: `عبارات ممنوعة في ${where}: ${found.map((f) => `«${f}»`).join('، ')}` });
     const tags = hashtagCount(text);
     if (tags > MAX_HASHTAGS) v.push({ hard: false, message: `وسوم ${where} ${tags} (الحد ${MAX_HASHTAGS})` });
   }
   return v;
+}
+
+/** كلمات نص مطبّع، وعلامات الترقيم والإيموجي تبقى ملتصقة بها حتى يُحسب حذفها تغييراً. */
+function tokens(text: string): string[] {
+  return normalizeArabic(text).split(/\s+/).filter(Boolean);
+}
+
+/** معامل Dice على أزواج الكلمات المتتالية بين نصين، من 0 إلى 1. */
+function dice(a: string, b: string): number {
+  const pairs = (w: string[]) => {
+    const m = new Map<string, number>();
+    if (w.length === 1) m.set(w[0] ?? '', 1);
+    for (let i = 0; i < w.length - 1; i++) {
+      const k = `${w[i]} ${w[i + 1]}`;
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  };
+  const pa = pairs(tokens(a));
+  const pb = pairs(tokens(b));
+  let total = 0;
+  for (const n of pa.values()) total += n;
+  for (const n of pb.values()) total += n;
+  if (total === 0) return 1;
+  let common = 0;
+  for (const [k, n] of pa) common += Math.min(n, pb.get(k) ?? 0);
+  return (2 * common) / total;
+}
+
+/**
+ * تشابه نسختين من مسودة، من 0 إلى 1: تشابه المنصة التي تغيّرت أكثر من غيرها (X ولينكدن وسناب).
+ * 1 تعني النص نفسه. يكشف التعديل الذي يعيد المسودة كما هي أو بتبديل كلمة أو كلمتين،
+ * ولا يعدّ تعديلاً محصوراً في منصة واحدة أو تغريدة واحدة إعادةً للنص.
+ */
+export function similarity(a: DraftContent, b: DraftContent): number {
+  return Math.min(
+    dice(a.x_segments.join('\n'), b.x_segments.join('\n')),
+    dice(a.linkedin_text, b.linkedin_text),
+    dice(a.snap_script.join('\n'), b.snap_script.join('\n')),
+  );
 }
