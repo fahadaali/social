@@ -177,6 +177,8 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
     deletePost: null, // (id) => {status, json}؛ الافتراضي يحذف فيصير GET للمعرّف 404
     retryPost: null, // (id) => {status, json}
     metrics: null, // (id) => {status, json}
+    // GET /v1/platforms/linkedin/insights: {status, json}
+    linkedinInsights: { status: 200, json: { data: { kind: 'member', follower_count: 100, posts: [] } } },
     upload: { status: 201, json: { media_id: 'med_1' } },
     // مسار الرابط الموقّع: GET /v1/media/upload-url ← PUT إلى storage.mock ← POST /v1/media/{id}/verify
     uploadUrl: { status: 200, json: { media_id: 'med_big', upload_url: 'https://storage.mock/media/med_big?X-Amz-Signature=sig', expires_at: '2026-10-11T10:15:00Z' } },
@@ -337,6 +339,7 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
         const status = call.body.publish_now ? 'publishing' : call.body.scheduled_at ? 'scheduled' : 'draft';
         return json(201, { id: `p_${++postSeq}`, status, scheduled_at: call.body.scheduled_at, targets: [] });
       }
+      if (p === '/v1/platforms/linkedin/insights' && request.method === 'GET') return json(mocks.linkedinInsights.status, mocks.linkedinInsights.json);
       const mm = /^\/v1\/posts\/([^/]+)\/metrics$/.exec(p);
       if (mm && request.method === 'GET') {
         if (mocks.metrics) {

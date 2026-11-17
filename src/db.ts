@@ -142,6 +142,8 @@ export const STATE_KEYS = {
   /** آخر تشغيل لمهمة مجدولة، تعرضه /setup. */
   lastCronAt: 'last_cron_at',
   metricsSnapshot: 'metrics_snapshot',
+  /** آخر سحب ناجح لأرقام لينكدن (linkedin.ts). */
+  linkedinSyncedAt: 'linkedin_synced_at',
   /** وضع التجربة من /mode ('true' أو 'false')؛ يتقدم على متغير DRY_RUN (mode.ts). */
   dryRun: 'dry_run',
 } as const;

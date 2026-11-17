@@ -262,6 +262,31 @@ export async function getPostMetrics(env: Env, postId: string): Promise<PostTarg
   return Array.isArray(r?.data?.targets) ? r.data.targets : [];
 }
 
+export interface LinkedInPostInsight {
+  post_id?: string;
+  permalink?: string;
+  created_at?: string;
+  impressions?: number;
+  unique_views?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+}
+
+/**
+ * GET /platforms/linkedin/insights — عدد المتابعين وأرقام المنشورات. للحساب الشخصي يغطي آخر 5 منشورات
+ * نُشرت عبر SocialAPI (الظهور، المشاهدات الفريدة، الإعجابات، التعليقات، المشاركات). يتطلب صلاحية analytics.read.
+ */
+export async function getLinkedInInsights(env: Env, account: string): Promise<{ follower_count?: number; kind?: string; posts: LinkedInPostInsight[] }> {
+  const r = await json<{ data?: { follower_count?: number; kind?: string; posts?: LinkedInPostInsight[] | null } } | null>(
+    env,
+    'GET',
+    `/platforms/linkedin/insights?account_id=${encodeURIComponent(account)}`,
+  );
+  const d = r?.data ?? {};
+  return { follower_count: d.follower_count, kind: d.kind, posts: Array.isArray(d.posts) ? d.posts : [] };
+}
+
 export interface Engagement {
   likes: number | null;
   comments: number | null;

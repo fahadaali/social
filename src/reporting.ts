@@ -1,4 +1,4 @@
-// تقرير الأداء: /stats الآن، والتقرير الأسبوعي يوم الخميس (SPEC §9 و§10 report).
+// تقرير الأداء: /stats الآن، والتقرير الشهري يوم 1 من كل شهر (طلب المالك، بدل تقرير الخميس الأسبوعي).
 
 import { collectPerformance, metricsNotes, pillarStats, REPORT_WINDOW_DAYS, saveSnapshot } from './analytics.ts';
 import { ClaudeError, claudeErrorMessage, claudeJson } from './claude.ts';
@@ -9,6 +9,8 @@ import { CB, retryKeyboard } from './preview.ts';
 import { LOW_DATA_THRESHOLD, parseReport, REPORT_MAX_TOKENS, REPORT_SCHEMA, reportSystem, reportUser } from './prompts/report.ts';
 import { socialApiErrorMessage } from './socialapi.ts';
 import { editMessageText, sendMessage } from './telegram.ts';
+import { linkedinSyncDue, syncLinkedIn } from './linkedin.ts';
+import { errorText } from './linkedin-errors.ts';
 import { postsAr } from './text.ts';
 import { formatRiyadhDate } from './time.ts';
 
@@ -16,6 +18,14 @@ const HEADER = `📈 تقرير الأداء (آخر ${REPORT_WINDOW_DAYS} يو�
 
 /** يجمع المقاييس ويحفظ لقطتها ثم يكتب التقرير. رسالة قصيرة جاهزة للإرسال. */
 export async function buildReport(ctx: Ctx): Promise<string> {
+  // أرقام لينكدن تُسحب كل 15 يوماً؛ إن فات موعدها (أو لم تُسحب قط) تُسحب الآن. فشلها لا يُسقط التقرير.
+  let linkedinNote = '';
+  try {
+    if (await linkedinSyncDue(ctx.env.DB)) await syncLinkedIn(ctx);
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'linkedin_sync_failed', err: errorText(err) }));
+    linkedinNote = `⚠️ تعذّر سحب أرقام لينكدن هذه المرة: ${errorText(err)}`;
+  }
   const items = await collectPerformance(ctx);
   await saveSnapshot(ctx.env.DB, items);
 
@@ -24,7 +34,12 @@ export async function buildReport(ctx: Ctx): Promise<string> {
   }
   const measured = items.filter((i) => i.total !== null);
   const notes = metricsNotes(items);
-  const notesBlock = notes.length ? `ℹ️ أسباب غياب الأرقام كما أرجعتها SocialAPI:\n${notes.map((n) => `• ${n}`).join('\n')}` : '';
+  const notesBlock = [
+    linkedinNote,
+    notes.length ? `ℹ️ أسباب غياب بعض الأرقام:\n${notes.map((n) => `• ${n}`).join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   if (measured.length === 0) {
     const noTargets = items.every((i) => !i.failed && i.platforms.length === 0);
     return [
@@ -52,7 +67,7 @@ export async function buildReport(ctx: Ctx): Promise<string> {
     report.headline,
     `🏆 ${report.top_post}`,
     `💡 ${report.insight}`,
-    `➡️ للأسبوع القادم: ${report.next_week_tip}`,
+    `➡️ للشهر القادم: ${report.next_week_tip}`,
     `— البيانات: ${postsAr(items.length)}، منها ${measured.length} بمقاييس متاحة.`,
     measured.length < LOW_DATA_THRESHOLD ? 'ℹ️ البيانات قليلة، فالاستنتاجات مبدئية.' : '',
     notesBlock,

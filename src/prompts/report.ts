@@ -33,7 +33,7 @@ export interface ReportResult {
 export function reportSystem(pillarsMd: string): string {
   return assistantSystemPrompt(
     pillarsMd,
-    'مهمتك كتابة تقرير أداء أسبوعي قصير لمنشورات المالك، اعتماداً على الأرقام المعطاة وحدها.',
+    'مهمتك كتابة تقرير أداء شهري قصير لمنشورات المالك، اعتماداً على الأرقام المعطاة وحدها.',
   );
 }
 
@@ -45,7 +45,9 @@ function postLine(p: PostPerformance): string {
         .map((m) =>
           m.note && [m.likes, m.comments, m.shares, m.saves].every((v) => v === null)
             ? `${m.platform}: لا أرقام (${m.note})`
-            : `${m.platform}: إعجابات ${value(m.likes)}، تعليقات ${value(m.comments)}، مشاركات ${value(m.shares)}، حفظ ${value(m.saves)}`,
+            : `${m.platform}: إعجابات ${value(m.likes)}، تعليقات ${value(m.comments)}، مشاركات ${value(m.shares)}، حفظ ${value(m.saves)}${
+                m.impressions !== undefined ? `، ظهور ${value(m.impressions ?? null)}، مشاهدات فريدة ${value(m.unique_views ?? null)}` : ''
+              }`,
         )
         .join(' | ')
     : p.failed
@@ -73,10 +75,11 @@ export function reportUser(today: string, items: PostPerformance[], stats: Pilla
       'الضوابط:',
       '- لا تستنتج ما لا تدعمه الأرقام، ولا تختلق أسباباً أو أرقاماً أو مقارنات بفترات سابقة.',
       '- «غير متوفر» يعني أن المنصة لم تُرجع الرقم، وليس صفراً.',
+      '- أرقام لينكدن من سحب دوري محفوظ، والظهور والمشاهدات الفريدة فيها خارج مجموع التفاعل؛ استعملها لقراءة الوصول. «لا أرقام» أمام منصة سببه مذكور بجانبه، فلا توصِ بإصلاح إعدادات بسببه.',
       '- headline: جملة واحدة تلخّص أداء الفترة.',
       '- top_post: سطر يذكر أفضل منشور برقمه وعنوانه المختصر وما يميّزه في الأرقام فقط.',
       '- insight: ملاحظة واحدة مدعومة بالأرقام.',
-      '- next_week_tip: توصية عملية واحدة للأسبوع القادم تنبع من الأرقام.',
+      '- next_week_tip: توصية عملية واحدة للشهر القادم تنبع من الأرقام، عن المحتوى لا عن إعدادات المنصات.',
     ].join('\n'),
   ]
     .filter(Boolean)

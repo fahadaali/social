@@ -20,7 +20,9 @@ import { withSavedMode } from '../mode.ts';
 import { CB } from '../preview.ts';
 import { generateEventsPlan, generatePlan } from '../planning.ts';
 import type { EventDigest } from '../prompts/events.ts';
-import { CRON_DAILY, CRON_MIDWEEK_EVENTS, CRON_WEEKLY_PLAN, CRON_WEEKLY_REPORT, cronKey } from '../schedule.ts';
+import { CRON_DAILY, CRON_LINKEDIN_SYNC, CRON_MIDWEEK_EVENTS, CRON_MONTHLY_REPORT, CRON_WEEKLY_PLAN, cronKey } from '../schedule.ts';
+import { syncLinkedIn } from '../linkedin.ts';
+import { errorText as linkedinErrorText } from '../linkedin-errors.ts';
 import { followUpPosts } from '../publishing.ts';
 import { buildReport } from '../reporting.ts';
 import { SocialApiError, socialApiErrorMessage } from '../socialapi.ts';
@@ -151,10 +153,20 @@ async function midweekEvents(ctx: Ctx): Promise<string[]> {
   return [];
 }
 
-/** تقرير الأداء الأسبوعي (SPEC §9). */
-async function weeklyReport(ctx: Ctx): Promise<string[]> {
+/** تقرير الأداء الشهري (طلب المالك، بدل تقرير الخميس): يوم 1 من كل شهر عن آخر 30 يوماً. */
+async function monthlyReport(ctx: Ctx): Promise<string[]> {
   await sendMessage(ctx.env, ctx.chatId, await buildReport(ctx));
   return [];
+}
+
+/** سحب أرقام لينكدن وحفظها، بصمت: لا رسالة إلا عند الفشل. */
+async function linkedinSync(ctx: Ctx): Promise<string[]> {
+  try {
+    await syncLinkedIn(ctx);
+    return [];
+  } catch (err) {
+    return [linkedinErrorText(err)];
+  }
 }
 
 interface CronTask {
@@ -168,7 +180,8 @@ const TASKS: Record<string, CronTask> = {
   [CRON_DAILY]: { name: 'المتابعة اليومية', run: daily },
   [CRON_WEEKLY_PLAN]: { name: 'الخطة الأسبوعية', run: weeklyPlan, budgetMs: EVENTS_TASK_BUDGET_MS },
   [CRON_MIDWEEK_EVENTS]: { name: 'نشرة الأحداث', run: midweekEvents, budgetMs: EVENTS_TASK_BUDGET_MS },
-  [CRON_WEEKLY_REPORT]: { name: 'تقرير الأداء الأسبوعي', run: weeklyReport },
+  [CRON_LINKEDIN_SYNC]: { name: 'سحب أرقام لينكدن', run: linkedinSync },
+  [CRON_MONTHLY_REPORT]: { name: 'تقرير الأداء الشهري', run: monthlyReport },
 };
 
 export async function runScheduled(env: Env, cron: string): Promise<void> {
