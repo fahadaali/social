@@ -361,6 +361,22 @@ test('LinkedIn returning 0 followers and 0 posts is diagnosed (reconnect), not s
     assert.equal(bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length, 2);
   }));
 
+test('LinkedIn posts that come back with all-zero counts (and 0 followers) are unavailable numbers, not real zeros', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }]);
+    bot.mocks.getPost = (id) => ({ status: 200, json: { id, status: 'published', targets: [{ platform: 'linkedin', status: 'published', platform_post_id: 'urn:li:share:111' }] } });
+    const zero = { impressions: 0, unique_views: 0, likes: 0, comments: 0, shares: 0, clicks: 0, engagement_rate: 0 };
+    bot.mocks.linkedinInsights = { status: 200, json: { data: { kind: 'member', follower_count: 0, posts: [{ post_id: 'urn:li:share:111', ...zero }, { post_id: 'urn:li:share:222', ...zero }] } } };
+    // صف أصفار محفوظ من نسخة سابقة لا يُعرض
+    await bot.db.prepare("INSERT INTO linkedin_metrics (linkedin_post_id, draft_id, impressions, unique_views, likes, comments, shares, synced_at) VALUES ('urn:li:share:111', 1, 0, 0, 0, 0, 0, datetime('now'))").run();
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(done.body.text, /⚠️ تعذّر سحب أرقام لينكدن هذه المرة: لينكدن أرجع 2 منشورات لكن كل أرقامها أصفار \(حتى الظهور\)، و0 متابعين/);
+    const prompt = bot.anthropic('report')[0].body.messages[0].content;
+    assert.match(prompt, /لينكدن: لا أرقام \(لا أرقام محفوظة له/);
+    assert.doesNotMatch(prompt, /لينكدن: إعجابات 0/);
+  }));
+
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 1 }, { daysAgo: 2 }]);
