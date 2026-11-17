@@ -5,7 +5,7 @@
 import type { Ctx } from './context.ts';
 import { getState, publishedSince, setState, STATE_KEYS } from './db.ts';
 import { accountId } from './env.ts';
-import { getLinkedInInsights, getPost, type LinkedInPostInsight } from './socialapi.ts';
+import { getLinkedInInsights, getPost, listAccounts, type LinkedInPostInsight } from './socialapi.ts';
 import { daysBetween, parseUtc, toSqlUtc } from './time.ts';
 
 /** المدة التي يُعد بعدها آخر سحب قديماً، فيسحب التقرير قبل كتابته. */
@@ -51,6 +51,10 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
   const account = accountId(ctx.env, 'linkedin');
   if (!account) throw new Error('معرّف حساب لينكدن غير مضبوط (SOCIALAPI_LINKEDIN_ACCOUNT_ID).');
   const insights = await getLinkedInInsights(ctx.env, account);
+  // رد فارغ تماماً (لا منشورات ولا متابعون) بلا خطأ: الحساب لا يملك التحليلات فعلياً، فلا يُحفظ صفر مضلل
+  if (insights.posts.length === 0 && !(typeof insights.follower_count === 'number' && insights.follower_count > 0)) {
+    throw new Error(await diagnoseEmpty(ctx, account));
+  }
 
   // مفاتيح مسودات لينكدن المنشورة مؤخراً → رقم المسودة
   const byKey = new Map<string, number>();
@@ -97,8 +101,28 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
   }
   if (stmts.length) await ctx.env.DB.batch(stmts);
   await setState(ctx.env.DB, STATE_KEYS.linkedinSyncedAt, now);
+  if (matched === 0 && insights.posts.length > 0 && published.length > 0) {
+    // للتشخيص: معرّفات لينكدن (لا نصوص) حين لا يطابق أي منشور مسودات البوت
+    console.warn(JSON.stringify({ evt: 'linkedin_no_match', sample: insights.posts.slice(0, 3).map((p) => p.post_id), drafts: published.length }));
+  }
+  await setState(ctx.env.DB, STATE_KEYS.linkedinLastSync, JSON.stringify({ at: now, fetched: insights.posts.length, matched, drafts: published.length }));
   console.log(JSON.stringify({ evt: 'linkedin_synced', fetched: insights.posts.length, matched }));
   return { fetched: insights.posts.length, matched };
+}
+
+/** سبب الرد الفارغ بالعربية، من صلاحيات الحساب في SocialAPI إن أمكن. */
+async function diagnoseEmpty(ctx: Ctx, account: string): Promise<string> {
+  const reconnect = 'أعد ربط حساب لينكدن من لوحة SocialAPI (Connect ← LinkedIn ← الحساب الشخصي) واختر صلاحية Analytics.';
+  try {
+    const acc = (await listAccounts(ctx.env)).find((a) => a.id === account);
+    if (acc?.status && acc.status !== 'active') return `حساب لينكدن يحتاج إعادة ربط (الحالة: ${acc.status}). ${reconnect}`;
+    if (Array.isArray(acc?.effective_permissions) && !acc.effective_permissions.includes('analytics.read')) {
+      return `صلاحية التحليلات (analytics.read) غير مفعّلة على حساب لينكدن. ${reconnect}`;
+    }
+  } catch {
+    // التشخيص اجتهاد؛ نكتفي بالرسالة العامة
+  }
+  return `لينكدن أرجع 0 متابعين و0 منشورات. على الأغلب رُبط الحساب قبل 4 نوفمبر 2026، وSocialAPI تشترط إعادة ربط الحسابات الشخصية القديمة لتفعيل التحليلات. ${reconnect}`;
 }
 
 function draftFor(p: LinkedInPostInsight, byKey: Map<string, number>): number | null {
@@ -112,7 +136,12 @@ function draftFor(p: LinkedInPostInsight, byKey: Map<string, number>): number | 
 /** هل مضى على آخر سحب ناجح 15 يوماً أو أكثر (أو لم يُسحب قط)؟ */
 export async function linkedinSyncDue(db: D1Database): Promise<boolean> {
   const last = await getState(db, STATE_KEYS.linkedinSyncedAt);
-  return !last || daysBetween(parseUtc(last), new Date()) >= LINKEDIN_SYNC_MAX_AGE_DAYS;
+  if (!last || daysBetween(parseUtc(last), new Date()) >= LINKEDIN_SYNC_MAX_AGE_DAYS) return true;
+  // لا شيء مفيد محفوظ بعد (مثل سحب سابق أرجع أصفاراً): يُعاد السحب بدل انتظار 15 يوماً
+  const useful = await db
+    .prepare('SELECT (SELECT COUNT(*) FROM linkedin_metrics) + (SELECT COUNT(*) FROM linkedin_followers WHERE follower_count > 0) AS n')
+    .first<{ n: number }>();
+  return !useful?.n;
 }
 
 /** آخر أرقام محفوظة لكل مسودة. */
@@ -139,15 +168,15 @@ export interface FollowerGrowth {
  * وإلا بأقدم قراءة متاحة.
  */
 export async function followerGrowth(db: D1Database): Promise<FollowerGrowth | null> {
-  const latest = await db.prepare('SELECT at, follower_count FROM linkedin_followers ORDER BY at DESC LIMIT 1').first<{ at: string; follower_count: number }>();
+  const latest = await db.prepare('SELECT at, follower_count FROM linkedin_followers WHERE follower_count > 0 ORDER BY at DESC LIMIT 1').first<{ at: string; follower_count: number }>();
   if (!latest) return null;
   const base =
     (await db
-      .prepare("SELECT at, follower_count FROM linkedin_followers WHERE at <= datetime(?, '-25 days') ORDER BY at DESC LIMIT 1")
+      .prepare("SELECT at, follower_count FROM linkedin_followers WHERE follower_count > 0 AND at <= datetime(?, '-25 days') ORDER BY at DESC LIMIT 1")
       .bind(latest.at)
       .first<{ at: string; follower_count: number }>()) ??
     (await db
-      .prepare('SELECT at, follower_count FROM linkedin_followers WHERE at < ? ORDER BY at ASC LIMIT 1')
+      .prepare('SELECT at, follower_count FROM linkedin_followers WHERE follower_count > 0 AND at < ? ORDER BY at ASC LIMIT 1')
       .bind(latest.at)
       .first<{ at: string; follower_count: number }>());
   return { current: latest.follower_count, delta: base ? latest.follower_count - base.follower_count : null, since: base?.at ?? null };

@@ -22,6 +22,7 @@ import { LOW_DATA_THRESHOLD, parseReport, REPORT_MAX_TOKENS, REPORT_SCHEMA, repo
 import { socialApiErrorMessage } from './socialapi.ts';
 import { editMessageText, sendMessage } from './telegram.ts';
 import { followerGrowth, linkedinSyncDue, syncLinkedIn } from './linkedin.ts';
+import { getJsonState, STATE_KEYS } from './db.ts';
 import { errorText } from './linkedin-errors.ts';
 import { postsAr } from './text.ts';
 import { formatRiyadhDate } from './time.ts';
@@ -40,6 +41,12 @@ export async function buildReport(ctx: Ctx, opts: { record?: boolean } = {}): Pr
   } catch (err) {
     console.warn(JSON.stringify({ evt: 'linkedin_sync_failed', err: errorText(err) }));
     linkedinNote = `⚠️ تعذّر سحب أرقام لينكدن هذه المرة: ${errorText(err)}`;
+  }
+  if (!linkedinNote) {
+    const last = await getJsonState<{ fetched: number; matched: number; drafts: number }>(ctx.env.DB, STATE_KEYS.linkedinLastSync);
+    if (last && last.fetched > 0 && last.matched === 0 && last.drafts > 0) {
+      linkedinNote = `⚠️ سُحبت أرقام ${last.fetched} من منشورات لينكدن لكن لم يطابق أي منها منشورات البوت، فلم تُضف للتقرير.`;
+    }
   }
   const items = await collectPerformance(ctx);
   await saveSnapshot(ctx.env.DB, items);
