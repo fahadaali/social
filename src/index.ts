@@ -9,6 +9,7 @@ import { handleCallback } from './handlers/callbacks.ts';
 import { errorSummary, runScheduled } from './handlers/cron.ts';
 import { handleMessage } from './handlers/messages.ts';
 import { ensureSchema } from './migrations.ts';
+import { withAccounts } from './accounts.ts';
 import { withSavedMode } from './mode.ts';
 import { handleSetup } from './setup.ts';
 import { editMessageText, sendMessage, type TgUpdate } from './telegram.ts';
@@ -26,7 +27,7 @@ async function processUpdate(env: Env, update: TgUpdate, chatId: number): Promis
       return;
     }
     await ensureSchema(env.DB);
-    ctx.env = await withSavedMode(env);
+    ctx.env = await withAccounts(await withSavedMode(env));
     // منع التكرار (SPEC §4.3)
     if (!(await markUpdateProcessed(env.DB, update.update_id))) return;
     if (update.message) await handleMessage(ctx, update.message);
@@ -63,7 +64,7 @@ async function processDraftJob(env: Env, job: DraftJob, attempts: number): Promi
       return;
     }
     await ensureSchema(env.DB);
-    ctx.env = await withSavedMode(env);
+    ctx.env = await withAccounts(await withSavedMode(env));
     await runDraftJob(ctx, job);
   } catch (err) {
     // runDraftJob لا يرمي؛ هذا فشل قبله (قاعدة البيانات مثلاً)، فلا تبقى رسالة «جاري الصياغة…» معلّقة

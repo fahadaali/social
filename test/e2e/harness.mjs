@@ -499,7 +499,9 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
     workerLogs,
     tg: (method) => calls.filter((c) => c.tg === method),
     lastTg: (method) => calls.filter((c) => c.tg === method).at(-1),
-    social: (method, path) => calls.filter((c) => c.host === 'api.social-api.ai' && c.method === method && (!path || c.path === path)),
+    // بلا مسار: يستثني GET /v1/accounts (اكتشاف الحسابات تلقائياً مع كل طلب، accounts.ts)
+    social: (method, path) =>
+      calls.filter((c) => c.host === 'api.social-api.ai' && c.method === method && (path ? c.path === path : c.path !== '/v1/accounts')),
     anthropic: (kind) => calls.filter((c) => c.host === 'api.anthropic.com' && (!kind || c.kind === kind)),
 
     async post(update, headers = { 'X-Telegram-Bot-Api-Secret-Token': SECRET }) {

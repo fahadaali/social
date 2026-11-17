@@ -28,6 +28,8 @@ export interface Env {
   ALLOWED_TELEGRAM_USER_ID?: string;
   SOCIALAPI_X_ACCOUNT_ID?: string;
   SOCIALAPI_LINKEDIN_ACCOUNT_ID?: string;
+  /** معرّفات الحسابات المكتشفة تلقائياً من SocialAPI (accounts.ts withAccounts)؛ تتقدم على المتغيرين. */
+  resolvedAccounts?: Partial<Record<'x' | 'linkedin', string>>;
   /** غيابه = وضع التجربة مفعّل (الافتراض الآمن). */
   DRY_RUN?: string;
   /** مدقّق الأسلوب بعد كل صياغة؛ off لإيقافه. غيابه = مفعّل. */
@@ -70,8 +72,13 @@ export type Platform = 'x' | 'linkedin';
 export const PLATFORMS: readonly Platform[] = ['x', 'linkedin'];
 export const PLATFORM_LABEL: Record<Platform, string> = { x: 'X', linkedin: 'لينكدن' };
 
-/** معرّف حساب المنصة في SocialAPI، أو null إذا لم يُضبط. */
-export function accountId(env: Env, platform: Platform): string | null {
+/** المعرّف المضبوط في متغير Cloudflare (اختياري الآن)، أو null. */
+export function configuredAccountId(env: Env, platform: Platform): string | null {
   const id = str(platform === 'x' ? env.SOCIALAPI_X_ACCOUNT_ID : env.SOCIALAPI_LINKEDIN_ACCOUNT_ID);
   return id || null;
+}
+
+/** معرّف حساب المنصة في SocialAPI: المكتشف تلقائياً، وإلا المتغير، وإلا null. */
+export function accountId(env: Env, platform: Platform): string | null {
+  return str(env.resolvedAccounts?.[platform]) || configuredAccountId(env, platform);
 }

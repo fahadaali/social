@@ -16,6 +16,7 @@ import {
 import { ownerId, reminderAfterDays, type Env } from '../env.ts';
 import { eventsErrorMessage, researchEvents } from '../events.ts';
 import { ensureSchema } from '../migrations.ts';
+import { withAccounts } from '../accounts.ts';
 import { withSavedMode } from '../mode.ts';
 import { CB } from '../preview.ts';
 import { generateEventsPlan, generatePlan } from '../planning.ts';
@@ -207,7 +208,7 @@ export async function runScheduled(env: Env, cron: string): Promise<void> {
   // آمن لأن كل مهمة ترسل رسالتها في آخرها، وأخطاء المهمة اليومية تُجمع داخلها فلا تصل إلى هنا.
   const attempt = async (): Promise<string[]> => {
     await ensureSchema(env.DB);
-    ctx.env = await withSavedMode(env);
+    ctx.env = await withAccounts(await withSavedMode(env));
     // تعرضه /setup، فيُعرف من المتصفح أن المهام المجدولة تعمل
     await setState(env.DB, STATE_KEYS.lastCronAt, new Date().toISOString());
     return task.run(ctx);

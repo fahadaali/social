@@ -1,6 +1,6 @@
 // الرسائل النصية والأوامر والصور (SPEC §7).
 
-import { accountSetupHint } from '../accounts.ts';
+import { accountSetupHint, withAccounts } from '../accounts.ts';
 import { exportBackup } from '../backup.ts';
 import { PILLARS, VOICE_FILLED } from '../content.ts';
 import type { Ctx } from '../context.ts';
@@ -35,8 +35,8 @@ function configWarnings(env: Env): string[] {
   if (isDryRun(env)) w.push('🧪 وضع التجربة مفعّل: المنشورات تُحفظ مسودات في SocialAPI ولا تُنشر. للنشر الفعلي: /mode');
   if (PILLARS.length === 0) w.push('⚠️ لم تُعبّأ محاور المحتوى في config/pillars.md بعد.');
   if (!VOICE_FILLED) w.push('⚠️ لم يُعبّأ دليل الأسلوب في config/voice.md بعد.');
-  if (!accountId(env, 'x')) w.push('⚠️ لم يُضبط SOCIALAPI_X_ACCOUNT_ID.');
-  if (!accountId(env, 'linkedin')) w.push('⚠️ لم يُضبط SOCIALAPI_LINKEDIN_ACCOUNT_ID.');
+  if (!accountId(env, 'x')) w.push('⚠️ لم أجد حساب X مربوطاً في SocialAPI.');
+  if (!accountId(env, 'linkedin')) w.push('⚠️ لم أجد حساب لينكدن شخصياً مربوطاً في SocialAPI.');
   return w;
 }
 
@@ -98,6 +98,8 @@ async function handleCommand(ctx: Ctx, text: string): Promise<void> {
   const command = (text.split(/\s+/)[0] ?? '').split('@')[0]?.toLowerCase();
   switch (command) {
     case '/start':
+      // يعيد اكتشاف الحسابات فوراً (بعد إعادة ربط حساب مثلاً) بدل انتظار انتهاء الذاكرة
+      ctx.env = await withAccounts(ctx.env, { force: true });
       await syncCommandMenu(ctx);
       await sendMessage(ctx.env, ctx.chatId, welcome(ctx.env), menuKeyboard(await remindersPaused(ctx.env.DB)));
       await sendAccountHint(ctx);
