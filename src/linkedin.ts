@@ -87,6 +87,14 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
       ).bind(id, draftId, p.permalink ?? null, n(p.impressions), n(p.unique_views), n(p.likes), n(p.comments), n(p.shares), now),
     );
   }
+  if (typeof insights.follower_count === 'number' && Number.isFinite(insights.follower_count)) {
+    stmts.push(
+      ctx.env.DB.prepare('INSERT INTO linkedin_followers (at, follower_count) VALUES (?, ?) ON CONFLICT(at) DO UPDATE SET follower_count = excluded.follower_count').bind(
+        now,
+        insights.follower_count,
+      ),
+    );
+  }
   if (stmts.length) await ctx.env.DB.batch(stmts);
   await setState(ctx.env.DB, STATE_KEYS.linkedinSyncedAt, now);
   console.log(JSON.stringify({ evt: 'linkedin_synced', fetched: insights.posts.length, matched }));
@@ -117,4 +125,30 @@ export async function loadLinkedInMetrics(db: D1Database, draftIds: number[]): P
     .all<LinkedInMetricsRow>();
   for (const row of r.results) if (row.draft_id !== null) out.set(row.draft_id, row);
   return out;
+}
+
+export interface FollowerGrowth {
+  current: number;
+  /** الفرق عن أقدم قراءة ضمن الفترة، أو null إن لم توجد إلا قراءة واحدة. */
+  delta: number | null;
+  since: string | null;
+}
+
+/**
+ * عدد المتابعين الآن ونموّه: يُقارن بآخر قراءة أقدم من 25 يوماً (قرابة شهر بسحبين في الشهر)،
+ * وإلا بأقدم قراءة متاحة.
+ */
+export async function followerGrowth(db: D1Database): Promise<FollowerGrowth | null> {
+  const latest = await db.prepare('SELECT at, follower_count FROM linkedin_followers ORDER BY at DESC LIMIT 1').first<{ at: string; follower_count: number }>();
+  if (!latest) return null;
+  const base =
+    (await db
+      .prepare("SELECT at, follower_count FROM linkedin_followers WHERE at <= datetime(?, '-25 days') ORDER BY at DESC LIMIT 1")
+      .bind(latest.at)
+      .first<{ at: string; follower_count: number }>()) ??
+    (await db
+      .prepare('SELECT at, follower_count FROM linkedin_followers WHERE at < ? ORDER BY at ASC LIMIT 1')
+      .bind(latest.at)
+      .first<{ at: string; follower_count: number }>());
+  return { current: latest.follower_count, delta: base ? latest.follower_count - base.follower_count : null, since: base?.at ?? null };
 }

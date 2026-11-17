@@ -2,7 +2,7 @@
 // والمخرج { "headline", "top_post", "insight", "next_week_tip" }.
 // لا يُستنتج ما لا تدعمه الأرقام، وإذا كانت البيانات قليلة يُذكر ذلك صراحة.
 
-import type { PillarStat, PostPerformance } from '../analytics.ts';
+import { engagementRate, type MonthSummary, type PillarStat, type PostPerformance } from '../analytics.ts';
 import { postsAr, truncate } from '../text.ts';
 import { formatRiyadhDate, parseUtc } from '../time.ts';
 import { assistantSystemPrompt, quote } from './shared.ts';
@@ -46,7 +46,11 @@ function postLine(p: PostPerformance): string {
           m.note && [m.likes, m.comments, m.shares, m.saves].every((v) => v === null)
             ? `${m.platform}: لا أرقام (${m.note})`
             : `${m.platform}: إعجابات ${value(m.likes)}، تعليقات ${value(m.comments)}، مشاركات ${value(m.shares)}، حفظ ${value(m.saves)}${
-                m.impressions !== undefined ? `، ظهور ${value(m.impressions ?? null)}، مشاهدات فريدة ${value(m.unique_views ?? null)}` : ''
+                m.impressions !== undefined
+                  ? `، ظهور ${value(m.impressions ?? null)}، مشاهدات فريدة ${value(m.unique_views ?? null)}، معدل التفاعل لكل ظهور ${
+                      engagementRate(m) === null ? 'غير متوفر' : `${engagementRate(m)}%`
+                    }`
+                  : ''
               }`,
         )
         .join(' | ')
@@ -57,7 +61,23 @@ function postLine(p: PostPerformance): string {
   return `- #${p.draft_id} [${p.pillar ?? 'غير مصنّف'}] ${date}: «${truncate(p.title, 120)}» — ${metrics} — المجموع: ${value(p.total)}`;
 }
 
-export function reportUser(today: string, items: PostPerformance[], stats: PillarStat[]): string {
+export interface ReportExtras {
+  /** سطر المتابعين على لينكدن ونموّهم. */
+  followers?: string | null;
+  /** ملخص الشهر الماضي للمقارنة. */
+  previous?: MonthSummary | null;
+}
+
+function previousBlock(prev: MonthSummary): string {
+  const pillars = prev.pillars.map((p) => `- ${p.pillar}: متوسط التفاعل ${p.avg === null ? 'غير متوفر' : p.avg}`).join('\n');
+  return [
+    `تاريخ التقرير: ${formatRiyadhDate(parseUtc(prev.at))}. المنشورات: ${prev.posts}، المقيسة: ${prev.measured}.`,
+    `متوسط التفاعل للمنشور: ${prev.avg_engagement ?? 'غير متوفر'}. معدل التفاعل لكل ظهور على لينكدن: ${prev.linkedin_rate === null ? 'غير متوفر' : `${prev.linkedin_rate}%`}. المتابعون على لينكدن: ${prev.followers ?? 'غير متوفر'}.`,
+    pillars,
+  ].join('\n');
+}
+
+export function reportUser(today: string, items: PostPerformance[], stats: PillarStat[], extras: ReportExtras = {}): string {
   const measured = items.filter((i) => i.total !== null);
   const top = [...measured].sort((a, b) => (b.total ?? 0) - (a.total ?? 0))[0];
   const pillarLines = stats
@@ -68,13 +88,18 @@ export function reportUser(today: string, items: PostPerformance[], stats: Pilla
     `المنشورات (${items.length}):\n${quote('data', items.map(postLine).join('\n'))}`,
     `أداء المحاور:\n${quote('pillars', pillarLines)}`,
     top ? `أعلى منشور تفاعلاً وفق الأرقام: #${top.draft_id} بمجموع ${top.total}.` : '',
+    extras.followers ? `لينكدن: ${extras.followers.replace(/^👥\s*/, '')}` : '',
+    extras.previous ? `الشهر الماضي:\n${quote('previous', previousBlock(extras.previous))}` : '',
     measured.length < LOW_DATA_THRESHOLD
       ? `البيانات قليلة (${measured.length} من المنشورات فقط بمقاييس متاحة): اذكر ذلك صراحة، ولا تعمّم ولا تقارن مقارنات لا تحتملها الأرقام.`
       : '',
     [
       'الضوابط:',
-      '- لا تستنتج ما لا تدعمه الأرقام، ولا تختلق أسباباً أو أرقاماً أو مقارنات بفترات سابقة.',
+      extras.previous
+        ? '- لا تستنتج ما لا تدعمه الأرقام، ولا تختلق أسباباً أو أرقاماً. المقارنة بالماضي مسموحة بأرقام <previous> وحدها.'
+        : '- لا تستنتج ما لا تدعمه الأرقام، ولا تختلق أسباباً أو أرقاماً أو مقارنات بفترات سابقة.',
       '- «غير متوفر» يعني أن المنصة لم تُرجع الرقم، وليس صفراً.',
+      '- معدل التفاعل لكل ظهور يقارن منشورات لينكدن بعدل حين يختلف وصولها؛ قدّمه على المجموع الخام عند المقارنة بينها.',
       '- أرقام لينكدن من سحب دوري محفوظ، والظهور والمشاهدات الفريدة فيها خارج مجموع التفاعل؛ استعملها لقراءة الوصول. «لا أرقام» أمام منصة سببه مذكور بجانبه، فلا توصِ بإصلاح إعدادات بسببه.',
       '- headline: جملة واحدة تلخّص أداء الفترة.',
       '- top_post: سطر يذكر أفضل منشور برقمه وعنوانه المختصر وما يميّزه في الأرقام فقط.',

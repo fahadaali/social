@@ -155,7 +155,7 @@ async function midweekEvents(ctx: Ctx): Promise<string[]> {
 
 /** تقرير الأداء الشهري (طلب المالك، بدل تقرير الخميس): يوم 1 من كل شهر عن آخر 30 يوماً. */
 async function monthlyReport(ctx: Ctx): Promise<string[]> {
-  await sendMessage(ctx.env, ctx.chatId, await buildReport(ctx));
+  await sendMessage(ctx.env, ctx.chatId, await buildReport(ctx, { record: true }));
   return [];
 }
 

@@ -287,6 +287,26 @@ export async function getLinkedInInsights(env: Env, account: string): Promise<{ 
   return { follower_count: d.follower_count, kind: d.kind, posts: Array.isArray(d.posts) ? d.posts : [] };
 }
 
+export interface PostMetricsItem {
+  post_id?: string;
+  targets?: PostTarget[];
+  error?: TargetError;
+}
+
+/** أقصى عدد معرّفات في طلب المقاييس المجمّع. */
+export const BATCH_METRICS_MAX = 20;
+
+/**
+ * GET /posts/metrics?post_ids=… — مقاييس حتى 20 منشوراً في طلب واحد (changelog 2026-11-14).
+ * المنشور الذي تعذّرت قراءته يأتي بـ error على عنصره، والطلب كله 200. العناصر بترتيب المعرّفات.
+ */
+export async function getPostsMetrics(env: Env, postIds: string[]): Promise<Map<string, PostMetricsItem>> {
+  const r = await json<{ data?: PostMetricsItem[] } | null>(env, 'GET', `/posts/metrics?post_ids=${postIds.map(encodeURIComponent).join(',')}`);
+  const out = new Map<string, PostMetricsItem>();
+  for (const item of Array.isArray(r?.data) ? r.data : []) if (item?.post_id) out.set(item.post_id, item);
+  return out;
+}
+
 export interface Engagement {
   likes: number | null;
   comments: number | null;
