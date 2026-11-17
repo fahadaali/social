@@ -52,8 +52,11 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
   if (!account) throw new Error('معرّف حساب لينكدن غير مضبوط (SOCIALAPI_LINKEDIN_ACCOUNT_ID).');
   const insights = await getLinkedInInsights(ctx.env, account);
   // رد فارغ تماماً (لا منشورات ولا متابعون) بلا خطأ: الحساب لا يملك التحليلات فعلياً، فلا يُحفظ صفر مضلل
-  if (insights.posts.length === 0 && !(typeof insights.follower_count === 'number' && insights.follower_count > 0)) {
-    throw new Error(await diagnoseEmpty(ctx, account));
+  // رد بلا أي رقم موجب (لا متابعين ولا ظهور ولا تفاعل) بلا خطأ: الأصفار تعني أن لينكدن لم يُرجع الأرقام
+  // («A count LinkedIn cannot return for a post is 0»)، لا أنها أصفار حقيقية؛ فلا يُحفظ شيء منها.
+  const followers = typeof insights.follower_count === 'number' && insights.follower_count > 0;
+  if (!followers && insights.posts.every((p) => !hasNumbers(p))) {
+    throw new Error(await diagnoseEmpty(ctx, account, insights.posts.length));
   }
 
   // مفاتيح مسودات لينكدن المنشورة مؤخراً → رقم المسودة
@@ -110,8 +113,14 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
   return { fetched: insights.posts.length, matched };
 }
 
+/** في الرقم ما هو موجب؟ منشور منشور فعلاً لا يكون ظهوره صفراً. */
+type Counts = Partial<Record<'impressions' | 'unique_views' | 'likes' | 'comments' | 'shares', number | null>>;
+export function hasNumbers(p: Counts): boolean {
+  return [p.impressions, p.unique_views, p.likes, p.comments, p.shares].some((v) => typeof v === 'number' && v > 0);
+}
+
 /** سبب الرد الفارغ بالعربية، من صلاحيات الحساب في SocialAPI إن أمكن. */
-async function diagnoseEmpty(ctx: Ctx, account: string): Promise<string> {
+async function diagnoseEmpty(ctx: Ctx, account: string, posts = 0): Promise<string> {
   const reconnect = 'أعد ربط حساب لينكدن من لوحة SocialAPI (Connect ← LinkedIn ← الحساب الشخصي) واختر صلاحية Analytics.';
   try {
     const acc = (await listAccounts(ctx.env)).find((a) => a.id === account);
@@ -121,6 +130,9 @@ async function diagnoseEmpty(ctx: Ctx, account: string): Promise<string> {
     }
   } catch {
     // التشخيص اجتهاد؛ نكتفي بالرسالة العامة
+  }
+  if (posts > 0) {
+    return `لينكدن أرجع ${posts} منشورات لكن كل أرقامها أصفار (حتى الظهور)، و0 متابعين. هذا يعني أن لينكدن لا يعطي SocialAPI أرقام حسابك، لا أن التفاعل صفر. تأكد عند إعادة الربط أنك وافقت في شاشة لينكدن على مشاركة التحليلات، وإن بقيت المشكلة فراسل دعم SocialAPI بمعرّف الحساب ${account}.`;
   }
   return `لينكدن أرجع 0 متابعين و0 منشورات. على الأغلب رُبط الحساب قبل 4 نوفمبر 2026، وSocialAPI تشترط إعادة ربط الحسابات الشخصية القديمة لتفعيل التحليلات. ${reconnect}`;
 }
@@ -152,7 +164,8 @@ export async function loadLinkedInMetrics(db: D1Database, draftIds: number[]): P
     .prepare(`SELECT * FROM linkedin_metrics WHERE draft_id IN (${draftIds.map(() => '?').join(',')}) ORDER BY synced_at ASC`)
     .bind(...draftIds)
     .all<LinkedInMetricsRow>();
-  for (const row of r.results) if (row.draft_id !== null) out.set(row.draft_id, row);
+  // صف كل أرقامه أصفار حُفظ قبل هذا الفحص: أرقام لم يُرجعها لينكدن، لا تُعرض أصفاراً حقيقية
+  for (const row of r.results) if (row.draft_id !== null && hasNumbers(row)) out.set(row.draft_id, row);
   return out;
 }
 
