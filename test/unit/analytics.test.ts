@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { engagementTotal, performanceSection, pillarStats, type PostPerformance } from '../../src/analytics.ts';
+import { engagementTotal, metricsNotes, performanceSection, performanceTargets, pillarStats, type PostPerformance } from '../../src/analytics.ts';
 import { parseReport, reportUser } from '../../src/prompts/report.ts';
 import { planUser } from '../../src/prompts/plan.ts';
 import { computeCredits } from '../../src/publishing.ts';
@@ -85,4 +85,23 @@ test('credits: plan limit from SocialAPI, fallback limit, unlimited', () => {
 
 test('Arabic post counts', () => {
   assert.deepEqual([1, 2, 5, 11].map(postsAr), ['منشور واحد', 'منشوران', '5 منشورات', '11 منشوراً']);
+});
+
+test('performance targets keep the empty status SocialAPI returned before 2026-11-14, and carry target errors', () => {
+  const rows = performanceTargets([
+    { platform: 'twitter', status: '', metrics: { likes: 4, comments: 1, shares: 0, saves: 0 } },
+    { platform: 'linkedin', status: 'published', error: { code: 'resource.not_supported', message: 'n/a', category: 'resource' } },
+    { platform: 'twitter', status: 'failed' },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(engagementTotal(rows), 5);
+  assert.equal(rows[0]?.note, undefined);
+  assert.match(rows[1]?.note ?? '', /لا تتيح مقاييس المنشورات/);
+  const capped = performanceTargets([{ platform: 'twitter', status: 'published', error: { code: 'platform.twitter.usage_capped', message: 'x' } }]);
+  assert.match(capped[0]?.note ?? '', /نفد رصيد تطبيق X/);
+  const notes = metricsNotes([
+    { draft_id: 1, pillar: null, title: 't', published_at: '2026-11-01 10:00:00', platforms: [...rows, ...capped], total: 5, failed: false },
+    { draft_id: 2, pillar: null, title: 't', published_at: '2026-11-02 10:00:00', platforms: rows, total: 5, failed: false },
+  ]);
+  assert.deepEqual(notes.map((n) => n.split(':')[0]), ['لينكدن', 'X']);
 });

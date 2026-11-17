@@ -42,7 +42,11 @@ const value = (v: number | null) => (v === null ? 'غير متوفر' : String(v
 function postLine(p: PostPerformance): string {
   const metrics = p.platforms.length
     ? p.platforms
-        .map((m) => `${m.platform}: إعجابات ${value(m.likes)}، تعليقات ${value(m.comments)}، مشاركات ${value(m.shares)}، حفظ ${value(m.saves)}`)
+        .map((m) =>
+          m.note && [m.likes, m.comments, m.shares, m.saves].every((v) => v === null)
+            ? `${m.platform}: لا أرقام (${m.note})`
+            : `${m.platform}: إعجابات ${value(m.likes)}، تعليقات ${value(m.comments)}، مشاركات ${value(m.shares)}، حفظ ${value(m.saves)}`,
+        )
         .join(' | ')
     : p.failed
       ? 'تعذّر جلب المقاييس'
