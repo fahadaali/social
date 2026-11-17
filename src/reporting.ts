@@ -1,6 +1,6 @@
 // تقرير الأداء: /stats الآن، والتقرير الأسبوعي يوم الخميس (SPEC §9 و§10 report).
 
-import { collectPerformance, pillarStats, REPORT_WINDOW_DAYS, saveSnapshot } from './analytics.ts';
+import { collectPerformance, metricsNotes, pillarStats, REPORT_WINDOW_DAYS, saveSnapshot } from './analytics.ts';
 import { ClaudeError, claudeErrorMessage, claudeJson } from './claude.ts';
 import { PILLARS_MD } from './content.ts';
 import type { Ctx } from './context.ts';
@@ -23,8 +23,17 @@ export async function buildReport(ctx: Ctx): Promise<string> {
     return `${HEADER}\n\nلم يُنشر شيء عبر البوت خلال هذه الفترة، فلا أرقام يُبنى عليها تقرير.`;
   }
   const measured = items.filter((i) => i.total !== null);
+  const notes = metricsNotes(items);
+  const notesBlock = notes.length ? `ℹ️ أسباب غياب الأرقام كما أرجعتها SocialAPI:\n${notes.map((n) => `• ${n}`).join('\n')}` : '';
   if (measured.length === 0) {
-    return `${HEADER}\n\nنُشر ${postsAr(items.length)} خلال الفترة، لكن SocialAPI لم تُرجع لها مقاييس بعد، فلا أستنتج شيئاً.`;
+    const noTargets = items.every((i) => !i.failed && i.platforms.length === 0);
+    return [
+      HEADER,
+      `نُشر ${postsAr(items.length)} خلال الفترة، لكن SocialAPI لم تُرجع لها مقاييس بعد، فلا أستنتج شيئاً.`,
+      notesBlock || (noTargets ? 'ℹ️ لم تُرجع SocialAPI أي منصة منشورة لهذه المنشورات.' : ''),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   const report = await claudeJson(ctx.env, {
@@ -46,6 +55,7 @@ export async function buildReport(ctx: Ctx): Promise<string> {
     `➡️ للأسبوع القادم: ${report.next_week_tip}`,
     `— البيانات: ${postsAr(items.length)}، منها ${measured.length} بمقاييس متاحة.`,
     measured.length < LOW_DATA_THRESHOLD ? 'ℹ️ البيانات قليلة، فالاستنتاجات مبدئية.' : '',
+    notesBlock,
   ]
     .filter(Boolean)
     .join('\n\n');

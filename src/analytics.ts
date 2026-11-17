@@ -3,7 +3,7 @@
 
 import type { Ctx } from './context.ts';
 import { getJsonState, publishedSince, setState, STATE_KEYS } from './db.ts';
-import { getPostMetrics, platformName, readEngagement, SocialApiError, type Engagement } from './socialapi.ts';
+import { describeTargetError, getPostMetrics, platformName, readEngagement, SocialApiError, type Engagement, type PostTarget } from './socialapi.ts';
 import { postsAr, truncate } from './text.ts';
 import { formatRiyadhDate, parseUtc, toSqlUtc } from './time.ts';
 
@@ -13,6 +13,44 @@ const METRICS_CONCURRENCY = 4;
 export interface PlatformPerformance extends Engagement {
   platform: string;
   permalink?: string | undefined;
+  /** سبب غياب الأرقام كما أرجعته SocialAPI في targets[].error، إن وُجد. */
+  note?: string | undefined;
+}
+
+/**
+ * سبب غياب مقاييس هدف بالعربية. SocialAPI تُرجع 200 دائماً وتضع فشل كل منصة في targets[].error
+ * (guides/analytics: «Read live post metrics»)، فلا يصح تجاهله وإلا ظهر التقرير فارغاً بلا تفسير.
+ */
+export function metricsErrorNote(t: PostTarget): string | undefined {
+  const e = t.error;
+  if (!e) return undefined;
+  const code = e.code ?? '';
+  if (code === 'resource.not_supported') return 'المنصة لا تتيح مقاييس المنشورات عبر SocialAPI';
+  if (code === 'platform.twitter.usage_capped') return 'نفد رصيد تطبيق X أو بلغ حد الإنفاق؛ أضف رصيداً من X Developer Console';
+  if (e.category === 'auth' || code === 'account.reconnection_required' || code.endsWith('.auth') || code.endsWith('.permission_denied')) {
+    return 'يلزم إعادة ربط الحساب من لوحة SocialAPI';
+  }
+  if (code === 'resource.not_found') {
+    return `${e.message || 'غير موجود'} (تحقّق أن للحساب صلاحية analytics.read في SocialAPI وأن المنشور لم يُحذف)`;
+  }
+  return describeTargetError(t);
+}
+
+/**
+ * أهداف المنشور التي تُحتسب: المنشورة فقط. قبل 2026-11-14 كانت SocialAPI تُرجع status فارغاً ("")
+ * في مسار المقاييس (changelog)، فيُقبل الفارغ والغائب كمنشور؛ الأهداف غير المنشورة لا تُرجعها أصلاً.
+ */
+export function performanceTargets(targets: PostTarget[]): PlatformPerformance[] {
+  return targets
+    .filter((t) => !t.status || t.status === 'published')
+    .map((t) => ({ platform: platformName(t.platform), permalink: t.permalink, ...readEngagement(t.metrics), note: metricsErrorNote(t) }));
+}
+
+/** أسباب غياب الأرقام بلا تكرار، بصيغة «المنصة: السبب». */
+export function metricsNotes(items: PostPerformance[]): string[] {
+  const out = new Set<string>();
+  for (const i of items) for (const p of i.platforms) if (p.note) out.add(`${p.platform}: ${p.note}`);
+  return [...out];
 }
 
 export interface PostPerformance {
@@ -70,9 +108,10 @@ export async function collectPerformance(ctx: Ctx, days = REPORT_WINDOW_DAYS): P
     };
     try {
       const targets = await getPostMetrics(ctx.env, draft.socialapi_post_id ?? '');
-      const platforms = targets
-        .filter((t) => t.status === undefined || t.status === 'published')
-        .map((t) => ({ platform: platformName(t.platform), permalink: t.permalink, ...readEngagement(t.metrics) }));
+      const platforms = performanceTargets(targets);
+      for (const t of targets) {
+        if (t.error) console.warn(JSON.stringify({ evt: 'metrics_target_error', draft: draft.id, platform: t.platform, code: t.error.code ?? 'unknown' }));
+      }
       return { ...base, platforms, total: engagementTotal(platforms), failed: false };
     } catch (err) {
       firstError ??= err;

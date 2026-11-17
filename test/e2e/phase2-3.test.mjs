@@ -202,6 +202,42 @@ test('/stats when platforms return no numbers: says so instead of inferring', ()
     assert.equal(bot.anthropic().length, 0);
   }));
 
+test('/stats counts targets with an empty status (SocialAPI before 2026-11-14) and explains missing numbers', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }]);
+    bot.mocks.metrics = (id) => ({
+      status: 200,
+      json: {
+        data: {
+          post_id: id,
+          targets: [
+            { platform: 'twitter', status: '', metrics: { likes: 9, comments: 2, shares: 0, saves: 0 } },
+            { platform: 'linkedin', error: { code: 'resource.not_supported', message: 'LinkedIn does not report post metrics', category: 'resource' } },
+          ],
+        },
+      },
+    });
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(done.body.text, /منشور واحد، منها 1 بمقاييس متاحة/);
+    assert.match(done.body.text, /• لينكدن: المنصة لا تتيح مقاييس المنشورات/);
+    assert.match(bot.anthropic('report')[0].body.messages[0].content, /X: إعجابات 9، تعليقات 2.*\| لينكدن: لا أرقام/);
+  }));
+
+test('/stats with no numbers names the reason SocialAPI gave (e.g. X app out of credit)', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }]);
+    bot.mocks.metrics = (id) => ({
+      status: 200,
+      json: { data: { post_id: id, targets: [{ platform: 'twitter', status: 'published', error: { code: 'platform.twitter.usage_capped', message: 'capped' } }] } },
+    });
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈')), 10_000);
+    assert.match(done.body.text, /لم تُرجع لها مقاييس بعد/);
+    assert.match(done.body.text, /• X: نفد رصيد تطبيق X/);
+    assert.equal(bot.anthropic().length, 0);
+  }));
+
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 1 }, { daysAgo: 2 }]);
