@@ -89,7 +89,7 @@ test('scheduled draft: cancels the post in SocialAPI first (GET → DELETE → G
     const done = await bot.waitFor(() => editedStarting(bot, 910, `🗑 حُذفت المسودة #${id} نهائياً.`), 10_000, 'deleted');
     assert.match(done.body.text, /وأُلغيت جدولتها في SocialAPI، فلن يُنشر شيء/);
     assert.deepEqual(
-      bot.calls.filter((c) => c.host === 'api.social-api.ai').map((c) => `${c.method} ${c.path}`),
+      bot.calls.filter((c) => c.host === 'api.social-api.ai' && c.path !== '/v1/accounts').map((c) => `${c.method} ${c.path}`),
       ['GET /v1/posts/p_77', 'DELETE /v1/posts/p_77', 'GET /v1/posts/p_77'],
     );
     assert.equal(await count(bot, 'drafts'), 0);
@@ -107,7 +107,7 @@ test('deletion is refused near the scheduled time and for published drafts, with
     await bot.settle();
     assert.equal(markups(bot, 920).length + markups(bot, 921).length, 0);
     assert.equal(await count(bot, 'drafts'), 2);
-    assert.equal(bot.calls.filter((c) => c.host === 'api.social-api.ai').length, 0);
+    assert.equal(bot.calls.filter((c) => c.host === 'api.social-api.ai' && c.path !== '/v1/accounts').length, 0);
   }));
 
 // ---------- فكرة واحدة ----------

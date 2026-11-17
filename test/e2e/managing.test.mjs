@@ -71,7 +71,7 @@ const publishedPost = (id) => ({
 const kbOf = (call) => call.body.reply_markup?.inline_keyboard.flat() ?? [];
 const labels = (call) => kbOf(call).map((b) => b.text);
 const dataOf = (call, prefix) => kbOf(call).find((b) => b.callback_data.startsWith(prefix))?.callback_data;
-const socialCalls = (bot) => bot.calls.filter((c) => c.host === 'api.social-api.ai').map((c) => `${c.method} ${c.path}`);
+const socialCalls = (bot) => bot.calls.filter((c) => c.host === 'api.social-api.ai' && c.path !== '/v1/accounts').map((c) => `${c.method} ${c.path}`);
 const sentStarting = (bot, prefix) => bot.tg('sendMessage').find((c) => c.body.text.startsWith(prefix));
 const editedStarting = (bot, messageId, prefix) =>
   bot.tg('editMessageText').find((c) => c.body.message_id === messageId && c.body.text.startsWith(prefix));

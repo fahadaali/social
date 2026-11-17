@@ -1,7 +1,8 @@
 // عند /start: يعرض للمالك وحده حساباته المربوطة في SocialAPI ومعرّفاتها إن نقص معرّف أو لم يطابق حساباً،
 // فيضبطها من لوحة Cloudflare دون طرفية (NOTES.md القسم 10). لا يرسل شيئاً إن كان كل شيء سليماً.
 
-import { accountId, PLATFORM_LABEL, PLATFORMS, type Env, type Platform } from './env.ts';
+import { getJsonState, setState, STATE_KEYS } from './db.ts';
+import { accountId, configuredAccountId, PLATFORM_LABEL, PLATFORMS, type Env, type Platform } from './env.ts';
 import { listAccounts, socialApiErrorMessage, type Account } from './socialapi.ts';
 import type { MessageEntity } from './telegram.ts';
 
@@ -43,7 +44,7 @@ export async function accountSetupHint(env: Env): Promise<AccountHint | null> {
   }
 
   const platforms = PLATFORMS.map((p) => {
-    const mine = accounts.filter((a) => platformOf(a) === p);
+    const mine = accounts.filter((a) => eligible(a, p));
     const configured = accountId(env, p);
     return { p, mine, configured, match: configured ? mine.find((a) => a.id === configured) : undefined };
   });
@@ -77,7 +78,67 @@ export async function accountSetupHint(env: Env): Promise<AccountHint | null> {
         add(needsReconnect(a) ? ' (يحتاج إعادة ربط)\n' : '\n');
       }
     }
-    add('\nضع كل معرّف في متغيره في Cloudflare: الـ Worker ← Settings ← Variables and Secrets ← Add، بنوع Text، ثم Deploy.');
+    add('\nالبوت يختار الحساب تلقائياً متى كان حساباً واحداً لكل منصة. مع أكثر من حساب، ضع المعرّف المطلوب في متغيره في Cloudflare: الـ Worker ← Settings ← Variables and Secrets ← Add، بنوع Text، ثم Deploy.');
   }
   return { text: text.trimEnd(), entities };
+}
+
+// ---------- اكتشاف الحسابات تلقائياً (طلب المالك: لا حاجة لنسخ المعرّف إلى Cloudflare) ----------
+
+/** حساب لينكدن الشخصي فقط: صفحات الشركات صارت linkedin أيضاً منذ 2026-11-04 لكن connection_type فيها organization. */
+function eligible(a: Account, p: Platform): boolean {
+  if (platformOf(a) !== p && !(p === 'linkedin' && a.platform === 'linkedin_page')) return false;
+  if (p === 'linkedin') return a.platform === 'linkedin' && a.connection_type !== 'organization';
+  return true;
+}
+
+/**
+ * يختار حساب المنصة: المتغير إن طابق حساباً مربوطاً، وإلا الحساب الوحيد النشط (أو الوحيد إطلاقاً)،
+ * وإلا (عدة حسابات بلا متغير مطابق) يبقى المتغير كما هو ليعرض /start الخيارات.
+ */
+export function resolveAccount(accounts: Account[], p: Platform, configured: string | null): string | null {
+  const mine = accounts.filter((a) => eligible(a, p));
+  if (configured && mine.some((a) => a.id === configured)) return configured;
+  const active = mine.filter((a) => !needsReconnect(a));
+  if (active.length === 1) return active[0]!.id;
+  if (mine.length === 1) return mine[0]!.id;
+  return configured;
+}
+
+interface ResolvedCache {
+  at: number;
+  /** المتغيران وقت الاكتشاف: تغيّرهما يُبطل الذاكرة. */
+  configured: Partial<Record<Platform, string | null>>;
+  ids: Partial<Record<Platform, string | null>>;
+}
+
+/** مدة صلاحية الاكتشاف: إعادة ربط حساب تُلتقط خلال ساعة، و/start يفرض إعادته فوراً. */
+const RESOLVE_TTL_MS = 60 * 60 * 1000;
+
+const apply = (env: Env, ids: ResolvedCache['ids']): Env => {
+  const resolved: Partial<Record<Platform, string>> = {};
+  for (const p of PLATFORMS) {
+    const id = ids[p];
+    if (id) resolved[p] = id;
+  }
+  return { ...env, resolvedAccounts: resolved };
+};
+
+/** البيئة بمعرّفات الحسابات المكتشفة. فشل SocialAPI لا يوقف شيئاً: تُستعمل آخر قيمة محفوظة أو المتغيرات. */
+export async function withAccounts(env: Env, opts: { force?: boolean } = {}): Promise<Env> {
+  if (!env.DB || !String(env.SOCIALAPI_KEY ?? '').trim()) return env;
+  const configured = Object.fromEntries(PLATFORMS.map((p) => [p, configuredAccountId(env, p)])) as ResolvedCache['configured'];
+  const cached = await getJsonState<ResolvedCache>(env.DB, STATE_KEYS.resolvedAccounts);
+  const sameConfig = cached && PLATFORMS.every((p) => (cached.configured[p] ?? null) === (configured[p] ?? null));
+  if (!opts.force && cached && sameConfig && Date.now() - cached.at < RESOLVE_TTL_MS) return apply(env, cached.ids);
+  try {
+    const accounts = await listAccounts(env);
+    const ids = Object.fromEntries(PLATFORMS.map((p) => [p, resolveAccount(accounts, p, configured[p] ?? null)])) as ResolvedCache['ids'];
+    await setState(env.DB, STATE_KEYS.resolvedAccounts, JSON.stringify({ at: Date.now(), configured, ids } satisfies ResolvedCache));
+    if (cached && PLATFORMS.some((p) => cached.ids[p] !== ids[p])) console.log(JSON.stringify({ evt: 'accounts_resolved', changed: true }));
+    return apply(env, ids);
+  } catch (err) {
+    console.warn(JSON.stringify({ evt: 'accounts_resolve_failed', err: err instanceof Error ? err.message : 'unknown' }));
+    return cached ? apply(env, cached.ids) : env;
+  }
 }
