@@ -3,6 +3,8 @@
 
 import type { Ctx } from './context.ts';
 import { getJsonState, publishedSince, setState, STATE_KEYS } from './db.ts';
+import { PLATFORM_LABEL } from './env.ts';
+import { loadLinkedInMetrics, type LinkedInMetricsRow } from './linkedin.ts';
 import { describeTargetError, getPostMetrics, platformName, readEngagement, SocialApiError, type Engagement, type PostTarget } from './socialapi.ts';
 import { postsAr, truncate } from './text.ts';
 import { formatRiyadhDate, parseUtc, toSqlUtc } from './time.ts';
@@ -15,6 +17,35 @@ export interface PlatformPerformance extends Engagement {
   permalink?: string | undefined;
   /** سبب غياب الأرقام كما أرجعته SocialAPI في targets[].error، إن وُجد. */
   note?: string | undefined;
+  /** لينكدن فقط (من الأرقام المحفوظة): مرات الظهور والمشاهدات الفريدة، خارج مجموع التفاعل. */
+  impressions?: number | null | undefined;
+  unique_views?: number | null | undefined;
+}
+
+export const LINKEDIN_NOT_SYNCED_NOTE = 'لم تُسحب أرقامه بعد (تُسحب يومي 1 و16 من كل شهر، وتغطي آخر 5 منشورات فقط)';
+
+/**
+ * يستبدل هدف لينكدن (مسار المقاييس الحية لا يدعمه) بالأرقام المحفوظة من LinkedIn Insights.
+ * المنشور على لينكدن بلا أرقام محفوظة يظهر بسبب واضح بدل «غير مدعوم».
+ */
+export function withLinkedIn(platforms: PlatformPerformance[], onLinkedIn: boolean, row: LinkedInMetricsRow | undefined): PlatformPerformance[] {
+  const label = PLATFORM_LABEL.linkedin;
+  const rest = platforms.filter((p) => p.platform !== label);
+  if (!onLinkedIn && !platforms.some((p) => p.platform === label)) return platforms;
+  const live = platforms.find((p) => p.platform === label);
+  const li: PlatformPerformance = row
+    ? {
+        platform: label,
+        permalink: row.permalink ?? live?.permalink,
+        likes: row.likes,
+        comments: row.comments,
+        shares: row.shares,
+        saves: null,
+        impressions: row.impressions,
+        unique_views: row.unique_views,
+      }
+    : { platform: label, permalink: live?.permalink, likes: null, comments: null, shares: null, saves: null, note: LINKEDIN_NOT_SYNCED_NOTE };
+  return [...rest, li];
 }
 
 /**
@@ -120,7 +151,14 @@ export async function collectPerformance(ctx: Ctx, days = REPORT_WINDOW_DAYS): P
     }
   });
   if (items.length > 0 && items.every((i) => i.failed)) throw firstError;
-  return items;
+
+  const stored = await loadLinkedInMetrics(ctx.env.DB, published.map((p) => p.draft.id));
+  return items.map((item, idx) => {
+    const draft = published[idx]!.draft;
+    if (item.failed && !stored.has(draft.id)) return item;
+    const platforms = withLinkedIn(item.platforms, draft.platforms.includes('linkedin'), stored.get(draft.id));
+    return { ...item, platforms, total: engagementTotal(platforms) };
+  });
 }
 
 // ---------- لقطة المقاييس (تستفيد منها الخطة دون استدعاء المنصات من جديد) ----------

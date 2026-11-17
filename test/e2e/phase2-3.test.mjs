@@ -57,7 +57,7 @@ test('/help lists every command and the automatic schedule', () =>
     for (const c of ['/ideas', '/plan', '/queue', '/stats', '/usage', '/pause', '/resume', '/help']) {
       assert.ok(msg.body.text.includes(c), c);
     }
-    assert.match(msg.body.text, /خطة أسبوعية مع أحداث الأسبوع الأحد 8 ص، ونشرة أحداث الأربعاء 8 ص، وتقرير أداء الخميس 5 م/);
+    assert.match(msg.body.text, /خطة أسبوعية مع أحداث الأسبوع الأحد 8 ص، ونشرة أحداث الأربعاء 8 ص، وتقرير أداء شهري يوم 1 من الشهر 5 م/);
   }));
 
 test('/queue groups scheduled, pending/failed and publishing drafts; «عرض» for each resends a preview with its buttons', () =>
@@ -168,14 +168,14 @@ test('/stats: metrics of the last 30 days → report with the four fields, data 
     assert.match(text, /أسبوع هادئ بتفاعل محدود/);
     assert.match(text, /🏆 المنشور #1 تصدّر/);
     assert.match(text, /💡 /);
-    assert.match(text, /➡️ للأسبوع القادم: /);
+    assert.match(text, /➡️ للشهر القادم: /);
     assert.match(text, /— البيانات: منشوران، منها 2 بمقاييس متاحة/);
     assert.match(text, /ℹ️ البيانات قليلة، فالاستنتاجات مبدئية/);
     // المنشور الأقدم من 30 يوماً خارج التقرير
     assert.deepEqual(bot.social('GET').filter((c) => c.path.endsWith('/metrics')).map((c) => c.path).sort(), ['/v1/posts/p_1/metrics', '/v1/posts/p_2/metrics']);
     const [report] = bot.anthropic('report');
     const prompt = report.body.messages[0].content;
-    assert.match(prompt, /X: إعجابات 12، تعليقات 3، مشاركات 2، حفظ 1 \| لينكدن: إعجابات غير متوفر/);
+    assert.match(prompt, /X: إعجابات 12، تعليقات 3، مشاركات 2، حفظ 1 \| لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
     assert.match(prompt, /المجموع: 18/);
     assert.match(prompt, /البيانات قليلة/);
     assert.equal(report.body.model, 'claude-sonnet-5');
@@ -220,7 +220,7 @@ test('/stats counts targets with an empty status (SocialAPI before 2026-11-14) a
     await bot.sendText('/stats');
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     assert.match(done.body.text, /منشور واحد، منها 1 بمقاييس متاحة/);
-    assert.match(done.body.text, /• لينكدن: المنصة لا تتيح مقاييس المنشورات/);
+    assert.match(done.body.text, /• لينكدن: لم تُسحب أرقامه بعد/);
     assert.match(bot.anthropic('report')[0].body.messages[0].content, /X: إعجابات 9، تعليقات 2.*\| لينكدن: لا أرقام/);
   }));
 
@@ -236,6 +236,64 @@ test('/stats with no numbers names the reason SocialAPI gave (e.g. X app out of 
     assert.match(done.body.text, /لم تُرجع لها مقاييس بعد/);
     assert.match(done.body.text, /• X: نفد رصيد تطبيق X/);
     assert.equal(bot.anthropic().length, 0);
+  }));
+
+test('LinkedIn: /stats pulls insights when due, matches posts to drafts, and adds them to the report', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 2 }, { daysAgo: 5 }]);
+    bot.mocks.getPost = (id) => ({
+      status: 200,
+      json: {
+        id,
+        status: 'published',
+        targets: [
+          { platform: 'twitter', status: 'published' },
+          { platform: 'linkedin', status: 'published', platform_post_id: `urn:li:share:${id === 'p_1' ? 111 : 222}` },
+        ],
+      },
+    });
+    bot.mocks.linkedinInsights = {
+      status: 200,
+      json: {
+        data: {
+          kind: 'member',
+          follower_count: 900,
+          posts: [
+            { post_id: 'urn:li:share:111', permalink: 'https://www.linkedin.com/feed/update/urn:li:share:111', impressions: 1500, unique_views: 1200, likes: 40, comments: 6, shares: 3, clicks: 0, engagement_rate: 0 },
+            { post_id: 'urn:li:share:999', impressions: 10, unique_views: 9, likes: 1, comments: 0, shares: 0, clicks: 0, engagement_rate: 0 },
+          ],
+        },
+      },
+    };
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    const prompt = bot.anthropic('report')[0].body.messages[0].content;
+    assert.match(prompt, /#1 .*لينكدن: إعجابات 40، تعليقات 6، مشاركات 3، حفظ غير متوفر، ظهور 1500، مشاهدات فريدة 1200 — المجموع: 67/);
+    assert.match(prompt, /#2 .*لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
+    assert.match(done.body.text, /• لينكدن: لم تُسحب أرقامه بعد/);
+    const rows = await bot.db.prepare('SELECT linkedin_post_id, draft_id, likes FROM linkedin_metrics ORDER BY linkedin_post_id').all();
+    assert.deepEqual(rows.results.map((r) => [r.linkedin_post_id, r.draft_id, r.likes]), [['urn:li:share:111', 1, 40], ['urn:li:share:999', null, 1]]);
+
+    // سحب حديث: /stats التالي يقرأ المحفوظ ولا يسحب من جديد
+    const pulls = bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length;
+    await bot.sendText('/stats');
+    await bot.waitFor(() => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('📈')).length >= 2, 15_000, 'second report');
+    assert.equal(bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length, pulls);
+  }));
+
+test('LinkedIn sync cron (days 1 and 16) is silent on success and reports a missing permission', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 2 }]);
+    const before = bot.texts().length;
+    const ok = await bot.scheduled('30 5 1,16 * *');
+    assert.equal(ok.outcome, 'ok');
+    assert.equal(bot.texts().length, before, 'no message on success');
+    assert.ok(await bot.row("SELECT value FROM state WHERE key = 'linkedin_synced_at'"));
+
+    bot.mocks.linkedinInsights = { status: 403, json: { error: { code: 'account.permission_missing', message: 'analytics.read' } } };
+    const bad = await bot.scheduled('30 5 1,16 * *');
+    assert.equal(bad.outcome, 'exception');
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('⚠️ فشلت مهمة سحب أرقام لينكدن: حساب لينكدن لا يملك صلاحية التحليلات')), 5000);
   }));
 
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>
@@ -257,17 +315,17 @@ test('/stats surfaces a metrics failure with «أعد المحاولة»; one fa
     assert.match(bot.anthropic('report')[0].body.messages[0].content, /#2 .*تعذّر جلب المقاييس/);
   }));
 
-test('weekly report cron (Thursday 14:00 UTC) sends the report; a failure is reported to the owner', () =>
+test('monthly report cron (day 1, 14:00 UTC) sends the report; a failure is reported to the owner', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 3 }]);
-    const ok = await bot.scheduled('0 14 * * THU');
+    const ok = await bot.scheduled('0 14 1 * *');
     assert.equal(ok.outcome, 'ok');
     await bot.waitFor(() => bot.tg('sendMessage').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 5000, 'report');
 
     bot.mocks.metrics = () => ({ status: 401, json: { error: { code: 'auth.invalid_key', message: 'bad' } } });
-    const bad = await bot.scheduled('0 14 * * THU');
+    const bad = await bot.scheduled('0 14 1 * *');
     assert.equal(bad.outcome, 'exception');
-    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('⚠️ فشلت مهمة تقرير الأداء الأسبوعي: مفتاح SocialAPI غير صالح')), 5000);
+    await bot.waitFor(() => bot.texts().some((t) => t.startsWith('⚠️ فشلت مهمة تقرير الأداء الشهري: مفتاح SocialAPI غير صالح')), 5000);
   }));
 
 test('the plan uses the latest metrics snapshot (pillar performance) to weigh suggestions', () =>

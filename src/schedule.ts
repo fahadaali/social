@@ -5,7 +5,8 @@
 export const CRON_DAILY = '0 6 * * *'; // يومياً 9:00 ص بتوقيت الرياض
 export const CRON_WEEKLY_PLAN = '0 5 * * SUN'; // الأحد 8:00 ص
 export const CRON_MIDWEEK_EVENTS = '0 5 * * WED'; // الأربعاء 8:00 ص (NOTES.md القسم 11)
-export const CRON_WEEKLY_REPORT = '0 14 * * THU'; // الخميس 5:00 م
+export const CRON_LINKEDIN_SYNC = '30 5 1,16 * *'; // يوما 1 و16 من الشهر 8:30 ص: سحب أرقام لينكدن (بصمت)
+export const CRON_MONTHLY_REPORT = '0 14 1 * *'; // يوم 1 من الشهر 5:00 م: تقرير الأداء الشهري
 
 const DAY_NAMES = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
