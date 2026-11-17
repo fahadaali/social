@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { engagementTotal, metricsNotes, performanceSection, performanceTargets, pillarStats, type PostPerformance } from '../../src/analytics.ts';
+import { comparisonLine, engagementRate, engagementTotal, followersLine, metricsNotes, previousSummary, summarize, performanceSection, performanceTargets, pillarStats, type PostPerformance } from '../../src/analytics.ts';
 import { parseReport, reportUser } from '../../src/prompts/report.ts';
 import { planUser } from '../../src/prompts/plan.ts';
 import { computeCredits } from '../../src/publishing.ts';
@@ -104,4 +104,31 @@ test('performance targets keep the empty status SocialAPI returned before 2026-1
     { draft_id: 2, pillar: null, title: 't', published_at: '2026-11-02 10:00:00', platforms: rows, total: 5, failed: false },
   ]);
   assert.deepEqual(notes.map((n) => n.split(':')[0]), ['لينكدن', 'X']);
+});
+
+test('engagement rate per impression, and nothing without impressions', () => {
+  assert.equal(engagementRate({ likes: 40, comments: 6, shares: 3, impressions: 1500 }), 3.3);
+  assert.equal(engagementRate({ likes: 40, comments: 6, shares: 3, impressions: 0 }), null);
+  assert.equal(engagementRate({ likes: 4, comments: null, shares: null }), null);
+});
+
+test('month summary, previous month (at least 20 days old) and the comparison line', () => {
+  const now = new Date('2026-12-01T14:00:00Z');
+  const items: PostPerformance[] = [
+    { draft_id: 1, pillar: 'أ', title: 't', published_at: '2026-11-20 10:00:00', failed: false, total: 20,
+      platforms: [{ platform: 'لينكدن', likes: 15, comments: 3, shares: 2, saves: null, impressions: 1000, unique_views: 800 }] },
+    { draft_id: 2, pillar: 'ب', title: 't', published_at: '2026-11-21 10:00:00', failed: false, total: 10, platforms: [] },
+    { draft_id: 3, pillar: 'ب', title: 't', published_at: '2026-11-22 10:00:00', failed: true, total: null, platforms: [] },
+  ];
+  const cur = summarize(items, 900, now);
+  assert.deepEqual([cur.posts, cur.measured, cur.avg_engagement, cur.linkedin_rate, cur.followers], [3, 2, 15, 2, 900]);
+  const old = { ...cur, at: '2026-11-01 14:00:00', avg_engagement: 10, linkedin_rate: 4, posts: 5 };
+  const recent = { ...cur, at: '2026-11-20 09:00:00' };
+  assert.equal(previousSummary([old, recent], now)?.at, '2026-11-01 14:00:00');
+  assert.equal(previousSummary([recent], now), null);
+  assert.equal(comparisonLine(cur, null), null);
+  assert.match(comparisonLine(cur, old) ?? '', /متوسط التفاعل للمنشور 15 مقابل 10 \(\+50%\)، معدل التفاعل على لينكدن 2% مقابل 4% \(-50%\)، عدد المنشورات 3 مقابل 5/);
+  assert.equal(followersLine(null), null);
+  assert.equal(followersLine({ current: 900, delta: null, since: null }), '👥 المتابعون على لينكدن: 900');
+  assert.match(followersLine({ current: 900, delta: -3, since: '2026-11-01 05:30:00' }) ?? '', /900 \(-3 منذ /);
 });

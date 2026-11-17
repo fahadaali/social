@@ -172,7 +172,10 @@ test('/stats: metrics of the last 30 days → report with the four fields, data 
     assert.match(text, /— البيانات: منشوران، منها 2 بمقاييس متاحة/);
     assert.match(text, /ℹ️ البيانات قليلة، فالاستنتاجات مبدئية/);
     // المنشور الأقدم من 30 يوماً خارج التقرير
-    assert.deepEqual(bot.social('GET').filter((c) => c.path.endsWith('/metrics')).map((c) => c.path).sort(), ['/v1/posts/p_1/metrics', '/v1/posts/p_2/metrics']);
+    // طلب مجمّع واحد للمنشورين، والمنشور الأقدم خارجه
+    const metricCalls = bot.social('GET').filter((c) => c.path.endsWith('/metrics'));
+    assert.deepEqual(metricCalls.map((c) => c.path), ['/v1/posts/metrics']);
+    assert.deepEqual(new URL(metricCalls[0].url).searchParams.get('post_ids').split(',').sort(), ['p_1', 'p_2']);
     const [report] = bot.anthropic('report');
     const prompt = report.body.messages[0].content;
     assert.match(prompt, /X: إعجابات 12، تعليقات 3، مشاركات 2، حفظ 1 \| لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
@@ -268,7 +271,7 @@ test('LinkedIn: /stats pulls insights when due, matches posts to drafts, and add
     await bot.sendText('/stats');
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     const prompt = bot.anthropic('report')[0].body.messages[0].content;
-    assert.match(prompt, /#1 .*لينكدن: إعجابات 40، تعليقات 6، مشاركات 3، حفظ غير متوفر، ظهور 1500، مشاهدات فريدة 1200 — المجموع: 67/);
+    assert.match(prompt, /#1 .*لينكدن: إعجابات 40، تعليقات 6، مشاركات 3، حفظ غير متوفر، ظهور 1500، مشاهدات فريدة 1200، معدل التفاعل لكل ظهور 3.3% — المجموع: 67/);
     assert.match(prompt, /#2 .*لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
     assert.match(done.body.text, /• لينكدن: لم تُسحب أرقامه بعد/);
     const rows = await bot.db.prepare('SELECT linkedin_post_id, draft_id, likes FROM linkedin_metrics ORDER BY linkedin_post_id').all();
@@ -294,6 +297,46 @@ test('LinkedIn sync cron (days 1 and 16) is silent on success and reports a miss
     const bad = await bot.scheduled('30 5 1,16 * *');
     assert.equal(bad.outcome, 'exception');
     await bot.waitFor(() => bot.texts().some((t) => t.startsWith('⚠️ فشلت مهمة سحب أرقام لينكدن: حساب لينكدن لا يملك صلاحية التحليلات')), 5000);
+  }));
+
+test('batched metrics fall back to one request per post when the batch endpoint is unavailable', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }, { daysAgo: 2 }]);
+    bot.mocks.batchMetrics = { status: 404, json: { error: { code: 'resource.not_found', message: 'no route' } } };
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(done.body.text, /منشوران، منها 2 بمقاييس متاحة/);
+    assert.deepEqual(
+      bot.social('GET').filter((c) => c.path.endsWith('/metrics')).map((c) => c.path).sort(),
+      ['/v1/posts/metrics', '/v1/posts/p_1/metrics', '/v1/posts/p_2/metrics'],
+    );
+  }));
+
+test('monthly report: LinkedIn follower growth, and a comparison with last month from the recorded summary', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 2 }]);
+    // قراءتان سابقتان للمتابعين وملخص شهر ماضٍ
+    await bot.db.prepare("INSERT INTO linkedin_followers (at, follower_count) VALUES (datetime('now', '-31 days'), 850), (datetime('now', '-16 days'), 870)").run();
+    const prev = { at: '', posts: 4, measured: 4, avg_engagement: 9, linkedin_rate: null, followers: 850, pillars: [{ pillar: 'الحوكمة', avg: 9 }] };
+    const at = (await bot.row("SELECT datetime('now', '-30 days') AS t")).t;
+    await bot.db.prepare("INSERT INTO state (key, value) VALUES ('report_history', ?)").bind(JSON.stringify([{ ...prev, at }])).run();
+    bot.mocks.linkedinInsights = { status: 200, json: { data: { kind: 'member', follower_count: 900, posts: [] } } };
+
+    const ok = await bot.scheduled('0 14 1 * *');
+    assert.equal(ok.outcome, 'ok');
+    const msg = await bot.waitFor(() => bot.texts().find((t) => t.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(msg, /👥 المتابعون على لينكدن: 900 \(\+50 منذ /);
+    assert.match(msg, /📊 مقارنة بالشهر الماضي \(.*\): متوسط التفاعل للمنشور 18 مقابل 9 \(\+100%\)، عدد المنشورات 1 مقابل 4/);
+    const prompt = bot.anthropic('report')[0].body.messages[0].content;
+    assert.match(prompt, /<previous>[\s\S]*متوسط التفاعل للمنشور: 9[\s\S]*<\/previous>/);
+    assert.match(prompt, /المقارنة بالماضي مسموحة بأرقام <previous> وحدها/);
+    // التقرير المجدول يسجّل ملخصه، و/stats لا يسجّل
+    const history = () => bot.row("SELECT value FROM state WHERE key = 'report_history'").then((r) => JSON.parse(r.value));
+    assert.equal((await history()).length, 2);
+    assert.equal((await history())[1].followers, 900);
+    await bot.sendText('/stats');
+    await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈')), 15_000, '/stats');
+    assert.equal((await history()).length, 2);
   }));
 
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>

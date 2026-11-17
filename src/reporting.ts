@@ -1,6 +1,18 @@
 // تقرير الأداء: /stats الآن، والتقرير الشهري يوم 1 من كل شهر (طلب المالك، بدل تقرير الخميس الأسبوعي).
 
-import { collectPerformance, metricsNotes, pillarStats, REPORT_WINDOW_DAYS, saveSnapshot } from './analytics.ts';
+import {
+  collectPerformance,
+  comparisonLine,
+  followersLine,
+  loadHistory,
+  metricsNotes,
+  pillarStats,
+  previousSummary,
+  recordSummary,
+  REPORT_WINDOW_DAYS,
+  saveSnapshot,
+  summarize,
+} from './analytics.ts';
 import { ClaudeError, claudeErrorMessage, claudeJson } from './claude.ts';
 import { PILLARS_MD } from './content.ts';
 import type { Ctx } from './context.ts';
@@ -9,15 +21,18 @@ import { CB, retryKeyboard } from './preview.ts';
 import { LOW_DATA_THRESHOLD, parseReport, REPORT_MAX_TOKENS, REPORT_SCHEMA, reportSystem, reportUser } from './prompts/report.ts';
 import { socialApiErrorMessage } from './socialapi.ts';
 import { editMessageText, sendMessage } from './telegram.ts';
-import { linkedinSyncDue, syncLinkedIn } from './linkedin.ts';
+import { followerGrowth, linkedinSyncDue, syncLinkedIn } from './linkedin.ts';
 import { errorText } from './linkedin-errors.ts';
 import { postsAr } from './text.ts';
 import { formatRiyadhDate } from './time.ts';
 
 const HEADER = `📈 تقرير الأداء (آخر ${REPORT_WINDOW_DAYS} يوماً)`;
 
-/** يجمع المقاييس ويحفظ لقطتها ثم يكتب التقرير. رسالة قصيرة جاهزة للإرسال. */
-export async function buildReport(ctx: Ctx): Promise<string> {
+/**
+ * يجمع المقاييس ويحفظ لقطتها ثم يكتب التقرير. رسالة قصيرة جاهزة للإرسال.
+ * record: يحفظ ملخص هذا التقرير للمقارنة في الشهر التالي (التقرير الشهري المجدول وحده، لا /stats).
+ */
+export async function buildReport(ctx: Ctx, opts: { record?: boolean } = {}): Promise<string> {
   // أرقام لينكدن تُسحب كل 15 يوماً؛ إن فات موعدها (أو لم تُسحب قط) تُسحب الآن. فشلها لا يُسقط التقرير.
   let linkedinNote = '';
   try {
@@ -28,6 +43,13 @@ export async function buildReport(ctx: Ctx): Promise<string> {
   }
   const items = await collectPerformance(ctx);
   await saveSnapshot(ctx.env.DB, items);
+
+  const growth = await followerGrowth(ctx.env.DB);
+  const summary = summarize(items, growth?.current ?? null);
+  const previous = previousSummary(await loadHistory(ctx.env.DB));
+  if (opts.record && items.length > 0) await recordSummary(ctx.env.DB, summary);
+  const followers = followersLine(growth);
+  const comparison = comparisonLine(summary, previous);
 
   if (items.length === 0) {
     return `${HEADER}\n\nلم يُنشر شيء عبر البوت خلال هذه الفترة، فلا أرقام يُبنى عليها تقرير.`;
@@ -45,6 +67,7 @@ export async function buildReport(ctx: Ctx): Promise<string> {
     return [
       HEADER,
       `نُشر ${postsAr(items.length)} خلال الفترة، لكن SocialAPI لم تُرجع لها مقاييس بعد، فلا أستنتج شيئاً.`,
+      followers ?? '',
       notesBlock || (noTargets ? 'ℹ️ لم تُرجع SocialAPI أي منصة منشورة لهذه المنشورات.' : ''),
     ]
       .filter(Boolean)
@@ -54,7 +77,7 @@ export async function buildReport(ctx: Ctx): Promise<string> {
   const report = await claudeJson(ctx.env, {
     model: draftModel(ctx.env),
     system: reportSystem(PILLARS_MD),
-    messages: [{ role: 'user', content: reportUser(formatRiyadhDate(new Date()), items, pillarStats(items)) }],
+    messages: [{ role: 'user', content: reportUser(formatRiyadhDate(new Date()), items, pillarStats(items), { followers, previous }) }],
     schema: REPORT_SCHEMA,
     maxTokens: REPORT_MAX_TOKENS,
     deadline: ctx.deadline,
@@ -68,6 +91,8 @@ export async function buildReport(ctx: Ctx): Promise<string> {
     `🏆 ${report.top_post}`,
     `💡 ${report.insight}`,
     `➡️ للشهر القادم: ${report.next_week_tip}`,
+    comparison ?? '',
+    followers ?? '',
     `— البيانات: ${postsAr(items.length)}، منها ${measured.length} بمقاييس متاحة.`,
     measured.length < LOW_DATA_THRESHOLD ? 'ℹ️ البيانات قليلة، فالاستنتاجات مبدئية.' : '',
     notesBlock,

@@ -5,7 +5,17 @@ import type { Ctx } from './context.ts';
 import { getJsonState, publishedSince, setState, STATE_KEYS } from './db.ts';
 import { PLATFORM_LABEL } from './env.ts';
 import { loadLinkedInMetrics, type LinkedInMetricsRow } from './linkedin.ts';
-import { describeTargetError, getPostMetrics, platformName, readEngagement, SocialApiError, type Engagement, type PostTarget } from './socialapi.ts';
+import {
+  BATCH_METRICS_MAX,
+  describeTargetError,
+  getPostMetrics,
+  getPostsMetrics,
+  platformName,
+  readEngagement,
+  SocialApiError,
+  type Engagement,
+  type PostTarget,
+} from './socialapi.ts';
 import { postsAr, truncate } from './text.ts';
 import { formatRiyadhDate, parseUtc, toSqlUtc } from './time.ts';
 
@@ -124,31 +134,65 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 /**
- * مقاييس منشورات آخر days يوماً عبر GET /posts/{pid}/metrics.
+ * أهداف كل منشور: طلب مجمّع لكل 20 منشوراً (GET /posts/metrics). إن لم يتوفر المسار المجمّع (404/405)
+ * يُرجع إلى طلب لكل منشور. النتيجة لكل معرّف: الأهداف، أو الخطأ.
+ */
+async function fetchTargets(ctx: Ctx, ids: string[]): Promise<Map<string, PostTarget[] | { error: unknown }>> {
+  const out = new Map<string, PostTarget[] | { error: unknown }>();
+  const perPost = async (chunk: string[]) => {
+    await mapLimit(chunk, METRICS_CONCURRENCY, async (id) => {
+      try {
+        out.set(id, await getPostMetrics(ctx.env, id));
+      } catch (error) {
+        out.set(id, { error });
+      }
+    });
+  };
+  for (let i = 0; i < ids.length; i += BATCH_METRICS_MAX) {
+    const chunk = ids.slice(i, i + BATCH_METRICS_MAX);
+    try {
+      const batch = await getPostsMetrics(ctx.env, chunk);
+      for (const id of chunk) {
+        const item = batch.get(id);
+        if (!item) out.set(id, { error: new SocialApiError(200, 'resource.not_found', 'missing from batch response') });
+        else if (item.error && !(item.targets ?? []).length) {
+          out.set(id, { error: new SocialApiError(200, item.error.code ?? 'unknown', item.error.message ?? '') });
+        } else out.set(id, item.targets ?? []);
+      }
+    } catch (err) {
+      if (err instanceof SocialApiError && (err.status === 404 || err.status === 405)) await perPost(chunk);
+      else for (const id of chunk) out.set(id, { error: err });
+    }
+  }
+  return out;
+}
+
+/**
+ * مقاييس منشورات آخر days يوماً، ثم أرقام لينكدن المحفوظة.
  * إن فشل الجلب لكل المنشورات يُرمى الخطأ الأول (مثل مفتاح غير صالح) بدل تقرير فارغ مضلل.
  */
 export async function collectPerformance(ctx: Ctx, days = REPORT_WINDOW_DAYS): Promise<PostPerformance[]> {
   const published = await publishedSince(ctx.env.DB, days);
   let firstError: unknown = null;
-  const items = await mapLimit(published, METRICS_CONCURRENCY, async ({ draft, pillar }): Promise<PostPerformance> => {
+  const fetched = await fetchTargets(ctx, [...new Set(published.map((p) => p.draft.socialapi_post_id ?? ''))].filter(Boolean));
+  const items = published.map(({ draft, pillar }): PostPerformance => {
     const base = {
       draft_id: draft.id,
       pillar,
       title: draft.x_segments[0] ?? draft.linkedin_text,
       published_at: draft.published_at ?? draft.updated_at,
     };
-    try {
-      const targets = await getPostMetrics(ctx.env, draft.socialapi_post_id ?? '');
-      const platforms = performanceTargets(targets);
-      for (const t of targets) {
-        if (t.error) console.warn(JSON.stringify({ evt: 'metrics_target_error', draft: draft.id, platform: t.platform, code: t.error.code ?? 'unknown' }));
-      }
-      return { ...base, platforms, total: engagementTotal(platforms), failed: false };
-    } catch (err) {
-      firstError ??= err;
-      console.warn(JSON.stringify({ evt: 'metrics_failed', draft: draft.id, code: err instanceof SocialApiError ? err.code : 'unknown' }));
+    const r = fetched.get(draft.socialapi_post_id ?? '') ?? { error: new SocialApiError(0, 'unknown', 'no post id') };
+    if (!Array.isArray(r)) {
+      firstError ??= r.error;
+      console.warn(JSON.stringify({ evt: 'metrics_failed', draft: draft.id, code: r.error instanceof SocialApiError ? r.error.code : 'unknown' }));
       return { ...base, platforms: [], total: null, failed: true };
     }
+    for (const t of r) {
+      if (t.error) console.warn(JSON.stringify({ evt: 'metrics_target_error', draft: draft.id, platform: t.platform, code: t.error.code ?? 'unknown' }));
+    }
+    const platforms = performanceTargets(r);
+    return { ...base, platforms, total: engagementTotal(platforms), failed: false };
   });
   if (items.length > 0 && items.every((i) => i.failed)) throw firstError;
 
@@ -234,4 +278,86 @@ export function performanceSection(snapshot: MetricsSnapshot | null): string | n
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// ---------- معدل التفاعل لكل ظهور، وملخص الشهر للمقارنة ----------
+
+/** معدل التفاعل على لينكدن لكل ظهور (%)، بخانة عشرية واحدة؛ null بلا ظهور مسجّل. */
+export function engagementRate(p: Pick<PlatformPerformance, 'likes' | 'comments' | 'shares' | 'impressions'>): number | null {
+  const impressions = p.impressions ?? null;
+  if (impressions === null || impressions <= 0) return null;
+  const engaged = (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0);
+  return Math.round((engaged / impressions) * 1000) / 10;
+}
+
+export interface MonthSummary {
+  at: string;
+  posts: number;
+  measured: number;
+  /** متوسط التفاعل للمنشور المقيس. */
+  avg_engagement: number | null;
+  /** متوسط معدل التفاعل لكل ظهور على لينكدن (%). */
+  linkedin_rate: number | null;
+  followers: number | null;
+  pillars: Array<{ pillar: string; avg: number | null }>;
+}
+
+const round1 = (v: number) => Math.round(v * 10) / 10;
+const avgOf = (vals: number[]) => (vals.length ? round1(vals.reduce((a, b) => a + b, 0) / vals.length) : null);
+
+export function summarize(items: PostPerformance[], followers: number | null, at = new Date()): MonthSummary {
+  const measured = items.filter((i) => i.total !== null);
+  const rates = items.flatMap((i) => i.platforms.map(engagementRate).filter((r): r is number => r !== null));
+  return {
+    at: toSqlUtc(at),
+    posts: items.length,
+    measured: measured.length,
+    avg_engagement: avgOf(measured.map((i) => i.total ?? 0)),
+    linkedin_rate: avgOf(rates),
+    followers,
+    pillars: pillarStats(items).map((s) => ({ pillar: s.pillar, avg: s.avg })),
+  };
+}
+
+const HISTORY_KEEP = 12;
+/** ملخص يُعد «الشهر الماضي» إن مضى عليه 20 يوماً على الأقل. */
+const PREVIOUS_MIN_AGE_DAYS = 20;
+
+export async function loadHistory(db: D1Database): Promise<MonthSummary[]> {
+  return (await getJsonState<MonthSummary[]>(db, STATE_KEYS.reportHistory)) ?? [];
+}
+
+export async function recordSummary(db: D1Database, summary: MonthSummary): Promise<void> {
+  const history = [...(await loadHistory(db)), summary].slice(-HISTORY_KEEP);
+  await setState(db, STATE_KEYS.reportHistory, JSON.stringify(history));
+}
+
+export function previousSummary(history: MonthSummary[], now = new Date()): MonthSummary | null {
+  const old = history.filter((h) => (now.getTime() - parseUtc(h.at).getTime()) / 86_400_000 >= PREVIOUS_MIN_AGE_DAYS);
+  return old.length ? old[old.length - 1]! : null;
+}
+
+function change(cur: number | null, prev: number | null, unit = ''): string | null {
+  if (cur === null || prev === null) return null;
+  const diff = round1(cur - prev);
+  const pct = prev > 0 ? ` (${diff >= 0 ? '+' : ''}${Math.round((diff / prev) * 100)}%)` : '';
+  return `${cur}${unit} مقابل ${prev}${unit}${pct}`;
+}
+
+/** سطر المقارنة بالشهر الماضي في التقرير، أو null إن لم يوجد ما يُقارن. */
+export function comparisonLine(cur: MonthSummary, prev: MonthSummary | null): string | null {
+  if (!prev) return null;
+  const parts = [
+    change(cur.avg_engagement, prev.avg_engagement) && `متوسط التفاعل للمنشور ${change(cur.avg_engagement, prev.avg_engagement)}`,
+    change(cur.linkedin_rate, prev.linkedin_rate, '%') && `معدل التفاعل على لينكدن ${change(cur.linkedin_rate, prev.linkedin_rate, '%')}`,
+    `عدد المنشورات ${cur.posts} مقابل ${prev.posts}`,
+  ].filter(Boolean);
+  return `📊 مقارنة بالشهر الماضي (${formatRiyadhDate(parseUtc(prev.at))}): ${parts.join('، ')}.`;
+}
+
+/** سطر المتابعين على لينكدن. */
+export function followersLine(g: { current: number; delta: number | null; since: string | null } | null): string | null {
+  if (!g) return null;
+  const delta = g.delta === null || !g.since ? '' : ` (${g.delta >= 0 ? '+' : ''}${g.delta} منذ ${formatRiyadhDate(parseUtc(g.since))})`;
+  return `👥 المتابعون على لينكدن: ${g.current}${delta}`;
 }

@@ -5,6 +5,7 @@ import draftNotes from '../migrations/0002_draft_notes.sql';
 import draftImageSource from '../migrations/0003_draft_image_source.sql';
 import draftStyleReview from '../migrations/0004_draft_style_review.sql';
 import linkedinMetrics from '../migrations/0005_linkedin_metrics.sql';
+import linkedinFollowers from '../migrations/0006_linkedin_followers.sql';
 import { applyMigrations, type Migration } from './schema.ts';
 
 // بالترتيب، وبأسماء الملفات نفسها التي يسجّلها «wrangler d1 migrations apply»
@@ -14,6 +15,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { name: '0003_draft_image_source.sql', sql: draftImageSource },
   { name: '0004_draft_style_review.sql', sql: draftStyleReview },
   { name: '0005_linkedin_metrics.sql', sql: linkedinMetrics },
+  { name: '0006_linkedin_followers.sql', sql: linkedinFollowers },
 ];
 
 let ready = false;

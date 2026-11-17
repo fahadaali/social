@@ -5,6 +5,18 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { convertV4MiniflareOptions, Log, LogLevel, Miniflare } from 'miniflare';
 
+function defaultMetrics(id) {
+  return {
+    data: {
+      post_id: id,
+      targets: [
+        { platform: 'twitter', status: 'published', metrics: { likes: 12, comments: 3, shares: 2, saves: 1 } },
+        { platform: 'linkedin', status: 'published' },
+      ],
+    },
+  };
+}
+
 export const OWNER = 111111;
 export const STRANGER = 222222;
 export const SECRET = 'e2e_secret-TOKEN_0123456789';
@@ -176,7 +188,8 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
     patchPost: null, // (id, body) => {status, json}
     deletePost: null, // (id) => {status, json}؛ الافتراضي يحذف فيصير GET للمعرّف 404
     retryPost: null, // (id) => {status, json}
-    metrics: null, // (id) => {status, json}
+    metrics: null, // (id) => {status, json}، يُستعمل للمسارين: منشور واحد والمجمّع
+    batchMetrics: null, // {status, json} لتجاوز المسار المجمّع كله
     // GET /v1/platforms/linkedin/insights: {status, json}
     linkedinInsights: { status: 200, json: { data: { kind: 'member', follower_count: 100, posts: [] } } },
     upload: { status: 201, json: { media_id: 'med_1' } },
@@ -339,6 +352,18 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
         const status = call.body.publish_now ? 'publishing' : call.body.scheduled_at ? 'scheduled' : 'draft';
         return json(201, { id: `p_${++postSeq}`, status, scheduled_at: call.body.scheduled_at, targets: [] });
       }
+      if (p === '/v1/posts/metrics' && request.method === 'GET') {
+        // المسار المجمّع: يُبنى من محاكي المنشور الواحد. خطأ مصادقة يُسقط الطلب كله كما في SocialAPI.
+        if (mocks.batchMetrics) return json(mocks.batchMetrics.status, mocks.batchMetrics.json);
+        const ids = (url.searchParams.get('post_ids') ?? '').split(',').filter(Boolean);
+        const data = [];
+        for (const id of ids) {
+          const r = mocks.metrics ? mocks.metrics(id) : { status: 200, json: defaultMetrics(id) };
+          if (r.status === 401 || r.status === 403) return json(r.status, r.json);
+          data.push(r.status === 200 ? { post_id: id, targets: r.json.data.targets } : { post_id: id, targets: [], error: r.json.error });
+        }
+        return json(200, { data });
+      }
       if (p === '/v1/platforms/linkedin/insights' && request.method === 'GET') return json(mocks.linkedinInsights.status, mocks.linkedinInsights.json);
       const mm = /^\/v1\/posts\/([^/]+)\/metrics$/.exec(p);
       if (mm && request.method === 'GET') {
@@ -346,15 +371,7 @@ export async function startBot({ vars = {}, migrate = true, withDb = true, withQ
           const r = mocks.metrics(mm[1]);
           return json(r.status, r.json);
         }
-        return json(200, {
-          data: {
-            post_id: mm[1],
-            targets: [
-              { platform: 'twitter', status: 'published', metrics: { likes: 12, comments: 3, shares: 2, saves: 1 } },
-              { platform: 'linkedin', status: 'published' },
-            ],
-          },
-        });
+        return json(200, defaultMetrics(mm[1]));
       }
       const rm = /^\/v1\/posts\/([^/]+)\/retry$/.exec(p);
       if (rm && request.method === 'POST') {

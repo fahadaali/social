@@ -15,7 +15,7 @@ async function withBot(opts, fn) {
   }
 }
 
-const ALL = ['0001_init.sql', '0002_draft_notes.sql', '0003_draft_image_source.sql', '0004_draft_style_review.sql', '0005_linkedin_metrics.sql'];
+const ALL = ['0001_init.sql', '0002_draft_notes.sql', '0003_draft_image_source.sql', '0004_draft_style_review.sql', '0005_linkedin_metrics.sql', '0006_linkedin_followers.sql'];
 const DERIVED = createHmac('sha256', BOT_TOKEN).update('social-bot:telegram-webhook-secret').digest('base64url');
 
 const applied = async (bot) =>
