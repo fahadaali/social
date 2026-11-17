@@ -144,6 +144,8 @@ export const STATE_KEYS = {
   metricsSnapshot: 'metrics_snapshot',
   /** آخر سحب ناجح لأرقام لينكدن (linkedin.ts). */
   linkedinSyncedAt: 'linkedin_synced_at',
+  /** نتيجة آخر سحب لينكدن {at, fetched, matched, drafts}، لتشخيص عدم المطابقة. */
+  linkedinLastSync: 'linkedin_last_sync',
   /** ملخص كل تقرير شهري، للمقارنة بالشهر الماضي (reporting.ts). */
   reportHistory: 'report_history',
   /** وضع التجربة من /mode ('true' أو 'false')؛ يتقدم على متغير DRY_RUN (mode.ts). */

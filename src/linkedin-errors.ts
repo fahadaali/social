@@ -9,5 +9,5 @@ export function errorText(err: unknown): string {
     }
     return socialApiErrorMessage(err);
   }
-  return err instanceof Error ? err.message.slice(0, 200) : 'خطأ غير معروف';
+  return err instanceof Error ? err.message.slice(0, 400) : 'خطأ غير معروف';
 }

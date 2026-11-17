@@ -89,6 +89,10 @@ export interface Account {
   /** active أو reconnect_required */
   status?: string;
   reconnect_reason?: string;
+  /** لينكدن: profile للحساب الشخصي، organization لصفحة الشركة. */
+  connection_type?: string;
+  /** ما يستطيع الحساب استعماله الآن (guides/permissions). */
+  effective_permissions?: string[];
 }
 
 export interface Usage {

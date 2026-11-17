@@ -178,7 +178,7 @@ test('/stats: metrics of the last 30 days → report with the four fields, data 
     assert.deepEqual(new URL(metricCalls[0].url).searchParams.get('post_ids').split(',').sort(), ['p_1', 'p_2']);
     const [report] = bot.anthropic('report');
     const prompt = report.body.messages[0].content;
-    assert.match(prompt, /X: إعجابات 12، تعليقات 3، مشاركات 2، حفظ 1 \| لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
+    assert.match(prompt, /X: إعجابات 12، تعليقات 3، مشاركات 2، حفظ 1 \| لينكدن: لا أرقام \(لا أرقام محفوظة له/);
     assert.match(prompt, /المجموع: 18/);
     assert.match(prompt, /البيانات قليلة/);
     assert.equal(report.body.model, 'claude-sonnet-5');
@@ -223,7 +223,7 @@ test('/stats counts targets with an empty status (SocialAPI before 2026-11-14) a
     await bot.sendText('/stats');
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     assert.match(done.body.text, /منشور واحد، منها 1 بمقاييس متاحة/);
-    assert.match(done.body.text, /• لينكدن: لم تُسحب أرقامه بعد/);
+    assert.match(done.body.text, /• لينكدن: لا أرقام محفوظة له/);
     assert.match(bot.anthropic('report')[0].body.messages[0].content, /X: إعجابات 9، تعليقات 2.*\| لينكدن: لا أرقام/);
   }));
 
@@ -272,8 +272,8 @@ test('LinkedIn: /stats pulls insights when due, matches posts to drafts, and add
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     const prompt = bot.anthropic('report')[0].body.messages[0].content;
     assert.match(prompt, /#1 .*لينكدن: إعجابات 40، تعليقات 6، مشاركات 3، حفظ غير متوفر، ظهور 1500، مشاهدات فريدة 1200، معدل التفاعل لكل ظهور 3.3% — المجموع: 67/);
-    assert.match(prompt, /#2 .*لينكدن: لا أرقام \(لم تُسحب أرقامه بعد/);
-    assert.match(done.body.text, /• لينكدن: لم تُسحب أرقامه بعد/);
+    assert.match(prompt, /#2 .*لينكدن: لا أرقام \(لا أرقام محفوظة له/);
+    assert.match(done.body.text, /• لينكدن: لا أرقام محفوظة له/);
     const rows = await bot.db.prepare('SELECT linkedin_post_id, draft_id, likes FROM linkedin_metrics ORDER BY linkedin_post_id').all();
     assert.deepEqual(rows.results.map((r) => [r.linkedin_post_id, r.draft_id, r.likes]), [['urn:li:share:111', 1, 40], ['urn:li:share:999', null, 1]]);
 
@@ -337,6 +337,28 @@ test('monthly report: LinkedIn follower growth, and a comparison with last month
     await bot.sendText('/stats');
     await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈')), 15_000, '/stats');
     assert.equal((await history()).length, 2);
+  }));
+
+test('LinkedIn returning 0 followers and 0 posts is diagnosed (reconnect), not shown as real zeros, and retried', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }]);
+    bot.mocks.linkedinInsights = { status: 200, json: { data: { kind: 'member', follower_count: 0, posts: [] } } };
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(done.body.text, /⚠️ تعذّر سحب أرقام لينكدن هذه المرة: لينكدن أرجع 0 متابعين و0 منشورات\. على الأغلب رُبط الحساب قبل 4 نوفمبر 2026/);
+    assert.doesNotMatch(done.body.text, /👥/);
+    assert.equal((await bot.db.prepare('SELECT COUNT(*) AS n FROM linkedin_followers').first()).n, 0);
+
+    // حساب بلا صلاحية التحليلات في effective_permissions: رسالة الصلاحية، والسحب يُعاد مع كل تقرير
+    const li = bot.mocks.accounts.json.data.find((a) => a.id === 'acc_li');
+    li.effective_permissions = ['posts.write'];
+    await bot.sendText('/stats');
+    await bot.waitFor(
+      () => bot.tg('editMessageText').some((c) => /صلاحية التحليلات \(analytics\.read\) غير مفعّلة على حساب لينكدن/.test(c.body.text)),
+      15_000,
+      'permission diagnosis',
+    );
+    assert.equal(bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length, 2);
   }));
 
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>
