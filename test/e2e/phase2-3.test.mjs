@@ -379,6 +379,24 @@ test('LinkedIn posts that come back with all-zero counts (and 0 followers) are u
     assert.doesNotMatch(prompt, /لينكدن: إعجابات 0/);
   }));
 
+test('LinkedIn with followers but no posts (reconnected account) explains that numbers start with the next post', () =>
+  withBot({}, async (bot) => {
+    await seedPublished(bot, [{ daysAgo: 1 }]);
+    bot.mocks.linkedinInsights = { status: 200, json: { data: { kind: 'member', follower_count: 1539, posts: [] } } };
+    await bot.sendText('/stats');
+    const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
+    assert.match(done.body.text, /👥 المتابعون على لينكدن: 1539/);
+    assert.match(done.body.text, /ℹ️ لينكدن لم يُرجع أي منشور: .*تبدأ الأرقام من منشورك القادم على لينكدن/);
+
+    // سحب اليوم يكفي؛ بعد يوم ومنشور بلا أرقام يُسحب من جديد قبل موعد 15 يوماً
+    const pulls = () => bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length;
+    assert.equal(pulls(), 1);
+    await bot.db.prepare("UPDATE state SET value = datetime('now', '-2 days') WHERE key = 'linkedin_synced_at'").run();
+    await bot.sendText('/stats');
+    await bot.waitFor(() => bot.tg('editMessageText').filter((c) => c.body.text.startsWith('📈')).length >= 2, 15_000, 'second report');
+    assert.equal(pulls(), 2);
+  }));
+
 test('/stats surfaces a metrics failure with «أعد المحاولة»; one failing post does not sink the report', () =>
   withBot({}, async (bot) => {
     await seedPublished(bot, [{ daysAgo: 1 }, { daysAgo: 2 }]);
