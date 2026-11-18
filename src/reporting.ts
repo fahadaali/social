@@ -16,7 +16,7 @@ import {
 import { ClaudeError, claudeErrorMessage, claudeJson } from './claude.ts';
 import { PILLARS_MD } from './content.ts';
 import type { Ctx } from './context.ts';
-import { draftModel } from './env.ts';
+import { draftModel, PLATFORM_LABEL } from './env.ts';
 import { CB, retryKeyboard } from './preview.ts';
 import { LOW_DATA_THRESHOLD, parseReport, REPORT_MAX_TOKENS, REPORT_SCHEMA, reportSystem, reportUser } from './prompts/report.ts';
 import { socialApiErrorMessage } from './socialapi.ts';
@@ -67,7 +67,8 @@ export async function buildReport(ctx: Ctx, opts: { record?: boolean } = {}): Pr
     return `${HEADER}\n\nلم يُنشر شيء عبر البوت خلال هذه الفترة، فلا أرقام يُبنى عليها تقرير.`;
   }
   const measured = items.filter((i) => i.total !== null);
-  const notes = metricsNotes(items);
+  // سطر لينكدن المشخِّص يكفي عن تكرار «لا أرقام» لكل منشور على لينكدن تحت «أسباب غياب بعض الأرقام»
+  const notes = metricsNotes(items).filter((n) => !(linkedinNote && n.startsWith(`${PLATFORM_LABEL.linkedin}:`)));
   const notesBlock = [
     linkedinNote,
     notes.length ? `ℹ️ أسباب غياب بعض الأرقام:\n${notes.map((n) => `• ${n}`).join('\n')}` : '',

@@ -80,6 +80,11 @@ function previousBlock(prev: MonthSummary): string {
 export function reportUser(today: string, items: PostPerformance[], stats: PillarStat[], extras: ReportExtras = {}): string {
   const measured = items.filter((i) => i.total !== null);
   const top = [...measured].sort((a, b) => (b.total ?? 0) - (a.total ?? 0))[0];
+  // منصات لم يُرجع أي منشور لها رقماً: تُذكر مرة للنموذج حتى لا يبني عليها
+  const seen = [...new Set(items.flatMap((i) => i.platforms.map((p) => p.platform)))];
+  const silent = seen.filter((name) =>
+    items.every((i) => i.platforms.filter((p) => p.platform === name).every((p) => [p.likes, p.comments, p.shares, p.saves].every((v) => v === null))),
+  );
   const pillarLines = stats
     .map((s) => `- ${s.pillar}: ${postsAr(s.posts)}، منها ${s.measured} بمقاييس، متوسط التفاعل ${s.avg === null ? 'غير متوفر' : s.avg}`)
     .join('\n');
@@ -88,6 +93,7 @@ export function reportUser(today: string, items: PostPerformance[], stats: Pilla
     `المنشورات (${items.length}):\n${quote('data', items.map(postLine).join('\n'))}`,
     `أداء المحاور:\n${quote('pillars', pillarLines)}`,
     top ? `أعلى منشور تفاعلاً وفق الأرقام: #${top.draft_id} بمجموع ${top.total}.` : '',
+    silent.length ? `بلا أرقام هذه الفترة لأي منشور: ${silent.join('، ')}. التحليل كله على ما سواها.` : '',
     extras.followers ? `لينكدن: ${extras.followers.replace(/^👥\s*/, '')}` : '',
     extras.previous ? `الشهر الماضي:\n${quote('previous', previousBlock(extras.previous))}` : '',
     measured.length < LOW_DATA_THRESHOLD
@@ -101,6 +107,7 @@ export function reportUser(today: string, items: PostPerformance[], stats: Pilla
       '- «غير متوفر» يعني أن المنصة لم تُرجع الرقم، وليس صفراً.',
       '- معدل التفاعل لكل ظهور يقارن منشورات لينكدن بعدل حين يختلف وصولها؛ قدّمه على المجموع الخام عند المقارنة بينها.',
       '- أرقام لينكدن من سحب دوري محفوظ، والظهور والمشاهدات الفريدة فيها خارج مجموع التفاعل؛ استعملها لقراءة الوصول. «لا أرقام» أمام منصة سببه مذكور بجانبه، فلا توصِ بإصلاح إعدادات بسببه.',
+      '- غياب أرقام منصة مشروح للمالك في ملاحظات أسفل التقرير، فلا تذكره في headline ولا top_post ولا insight ولا next_week_tip، ولا توصِ بمتابعته؛ حلّل الأرقام المتاحة وحدها.',
       '- headline: جملة واحدة تلخّص أداء الفترة.',
       '- top_post: سطر يذكر أفضل منشور برقمه وعنوانه المختصر وما يميّزه في الأرقام فقط.',
       '- insight: ملاحظة واحدة مدعومة بالأرقام.',
