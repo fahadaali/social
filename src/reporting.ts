@@ -43,8 +43,13 @@ export async function buildReport(ctx: Ctx, opts: { record?: boolean } = {}): Pr
     linkedinNote = `⚠️ تعذّر سحب أرقام لينكدن هذه المرة: ${errorText(err)}`;
   }
   if (!linkedinNote) {
-    const last = await getJsonState<{ fetched: number; matched: number; drafts: number }>(ctx.env.DB, STATE_KEYS.linkedinLastSync);
-    if (last && last.fetched > 0 && last.matched === 0 && last.drafts > 0) {
+    const last = await getJsonState<{ fetched: number; matched: number; zero?: number; drafts: number }>(ctx.env.DB, STATE_KEYS.linkedinLastSync);
+    if (last && last.fetched === 0 && last.drafts > 0) {
+      linkedinNote =
+        'ℹ️ لينكدن لم يُرجع أي منشور: SocialAPI تعطي أرقام آخر 5 منشورات نُشرت عبرها من الحساب بربطه الحالي، فالمنشورات المنشورة قبل إعادة الربط لا تظهر. تبدأ الأرقام من منشورك القادم على لينكدن.';
+    } else if (last && last.fetched > 0 && last.zero === last.fetched) {
+      linkedinNote = `ℹ️ لينكدن أرجع ${last.fetched} من المنشورات لكن كل أرقامها أصفار (حتى الظهور)، أي أرقام غير متاحة لا تفاعل صفري. إن تكرر هذا بعد منشور جديد فراسل دعم SocialAPI.`;
+    } else if (last && last.fetched > 0 && last.matched === 0 && last.drafts > 0) {
       linkedinNote = `⚠️ سُحبت أرقام ${last.fetched} من منشورات لينكدن لكن لم يطابق أي منها منشورات البوت، فلم تُضف للتقرير.`;
     }
   }

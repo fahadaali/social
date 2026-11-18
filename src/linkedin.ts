@@ -108,7 +108,8 @@ export async function syncLinkedIn(ctx: Ctx): Promise<LinkedInSyncResult> {
     // للتشخيص: معرّفات لينكدن (لا نصوص) حين لا يطابق أي منشور مسودات البوت
     console.warn(JSON.stringify({ evt: 'linkedin_no_match', sample: insights.posts.slice(0, 3).map((p) => p.post_id), drafts: published.length }));
   }
-  await setState(ctx.env.DB, STATE_KEYS.linkedinLastSync, JSON.stringify({ at: now, fetched: insights.posts.length, matched, drafts: published.length }));
+  const zero = insights.posts.filter((p) => !hasNumbers(p)).length;
+  await setState(ctx.env.DB, STATE_KEYS.linkedinLastSync, JSON.stringify({ at: now, fetched: insights.posts.length, matched, zero, drafts: published.length }));
   console.log(JSON.stringify({ evt: 'linkedin_synced', fetched: insights.posts.length, matched }));
   return { fetched: insights.posts.length, matched };
 }
@@ -158,7 +159,19 @@ export async function linkedinSyncDue(db: D1Database): Promise<boolean> {
             + (SELECT COUNT(*) FROM linkedin_followers WHERE follower_count > 0) AS n`,
     )
     .first<{ n: number }>();
-  return !useful?.n;
+  if (!useful?.n) return true;
+  // منشور حديث على لينكدن بلا أرقام بعد، وآخر سحب أقدم من يوم: يُسحب (القراءة بلا رصيد) بدل انتظار موعد السحب
+  if (daysBetween(parseUtc(last), new Date()) < 1) return false;
+  const pending = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM drafts d
+        WHERE d.status IN ('published', 'partial') AND d.platforms LIKE '%linkedin%'
+          AND d.published_at >= datetime('now', '-30 days')
+          AND NOT EXISTS (SELECT 1 FROM linkedin_metrics m WHERE m.draft_id = d.id
+                            AND (COALESCE(m.impressions, 0) > 0 OR COALESCE(m.likes, 0) > 0 OR COALESCE(m.comments, 0) > 0 OR COALESCE(m.shares, 0) > 0))`,
+    )
+    .first<{ n: number }>();
+  return (pending?.n ?? 0) > 0;
 }
 
 /** آخر أرقام محفوظة لكل مسودة. */
