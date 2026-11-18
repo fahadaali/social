@@ -32,7 +32,7 @@ export interface PlatformPerformance extends Engagement {
   unique_views?: number | null | undefined;
 }
 
-export const LINKEDIN_NOT_SYNCED_NOTE = 'لا أرقام محفوظة له (السحب يومي 1 و16، ويغطي آخر 5 منشورات فقط)';
+export const LINKEDIN_NOT_SYNCED_NOTE = 'لا أرقام متاحة له من لينكدن';
 
 /**
  * يستبدل هدف لينكدن (مسار المقاييس الحية لا يدعمه) بالأرقام المحفوظة من LinkedIn Insights.
