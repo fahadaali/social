@@ -149,9 +149,14 @@ function draftFor(p: LinkedInPostInsight, byKey: Map<string, number>): number | 
 export async function linkedinSyncDue(db: D1Database): Promise<boolean> {
   const last = await getState(db, STATE_KEYS.linkedinSyncedAt);
   if (!last || daysBetween(parseUtc(last), new Date()) >= LINKEDIN_SYNC_MAX_AGE_DAYS) return true;
-  // لا شيء مفيد محفوظ بعد (مثل سحب سابق أرجع أصفاراً): يُعاد السحب بدل انتظار 15 يوماً
+  // لا شيء مفيد محفوظ بعد (مثل سحب سابق أرجع أصفاراً، فصفوف الأصفار لا تُحسب): يُعاد السحب بدل انتظار 15 يوماً
   const useful = await db
-    .prepare('SELECT (SELECT COUNT(*) FROM linkedin_metrics) + (SELECT COUNT(*) FROM linkedin_followers WHERE follower_count > 0) AS n')
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM linkedin_metrics
+                WHERE COALESCE(impressions, 0) > 0 OR COALESCE(unique_views, 0) > 0 OR COALESCE(likes, 0) > 0
+                   OR COALESCE(comments, 0) > 0 OR COALESCE(shares, 0) > 0)
+            + (SELECT COUNT(*) FROM linkedin_followers WHERE follower_count > 0) AS n`,
+    )
     .first<{ n: number }>();
   return !useful?.n;
 }
