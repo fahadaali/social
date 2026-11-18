@@ -223,7 +223,8 @@ test('/stats counts targets with an empty status (SocialAPI before 2026-11-14) a
     await bot.sendText('/stats');
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     assert.match(done.body.text, /منشور واحد، منها 1 بمقاييس متاحة/);
-    assert.match(done.body.text, /• لينكدن: لا أرقام متاحة له من لينكدن/);
+    assert.match(done.body.text, /ℹ️ لينكدن لم يُرجع أي منشور/);
+    assert.doesNotMatch(done.body.text, /• لينكدن:/);
     assert.match(bot.anthropic('report')[0].body.messages[0].content, /X: إعجابات 9، تعليقات 2.*\| لينكدن: لا أرقام/);
   }));
 
@@ -387,6 +388,10 @@ test('LinkedIn with followers but no posts (reconnected account) explains that n
     const done = await bot.waitFor(() => bot.tg('editMessageText').find((c) => c.body.text.startsWith('📈 تقرير الأداء')), 15_000, 'report');
     assert.match(done.body.text, /👥 المتابعون على لينكدن: 1539/);
     assert.match(done.body.text, /ℹ️ لينكدن لم يُرجع أي منشور: .*تبدأ الأرقام من منشورك القادم على لينكدن/);
+    assert.doesNotMatch(done.body.text, /• لينكدن:/, 'the diagnosis line is enough, no repeated bullet');
+    const prompt = bot.anthropic('report')[0].body.messages[0].content;
+    assert.match(prompt, /بلا أرقام هذه الفترة لأي منشور: لينكدن\. التحليل كله على ما سواها/);
+    assert.match(prompt, /غياب أرقام منصة مشروح للمالك في ملاحظات أسفل التقرير، فلا تذكره/);
 
     // سحب اليوم يكفي؛ بعد يوم ومنشور بلا أرقام يُسحب من جديد قبل موعد 15 يوماً
     const pulls = () => bot.social('GET').filter((c) => c.path === '/v1/platforms/linkedin/insights').length;
